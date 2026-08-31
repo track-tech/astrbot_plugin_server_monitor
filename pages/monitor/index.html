@@ -1875,7 +1875,8 @@ window.addEventListener('unhandledrejection', function (e) {
     var pts = (s0 && s0.history && s0.history.ts.length) || 0;
     $("foot").textContent = "采样：本机 " + ((S.data && S.data.local_interval) || "-") + "s · 远程 " +
       ((S.data && S.data.remote_interval) || "-") + "s · 探活 " + ((S.data && S.data.probes && S.data.probes.interval) || "-") +
-      "s · 曲线 " + pts + " 点 · astrbot_plugin_server_monitor v1.8";
+      "s · 曲线 " + pts + " 点 · astrbot_plugin_server_monitor" +
+      (S.data && S.data.plugin_version ? " v" + S.data.plugin_version : "");
   }
   async function tick() {
     if (!S.layout || !S.layout.length) return;

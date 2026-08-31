@@ -39,7 +39,7 @@ except ImportError:  # pragma: no cover
     _HAS_WEB_API = False
 
 PLUGIN_NAME = "astrbot_plugin_server_monitor"
-PLUGIN_VERSION = "v1.10.0"
+PLUGIN_VERSION = "1.10.0"
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
@@ -90,7 +90,7 @@ def _ui_state_path() -> Optional[str]:
             return None
 
 
-@register(PLUGIN_NAME, "YourName", "本地/云服务器状态实时监控看板与告警", PLUGIN_VERSION)
+@register(PLUGIN_NAME, "track-tech", "本地/云服务器状态实时监控看板与告警", PLUGIN_VERSION)
 class ServerMonitorPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -230,7 +230,12 @@ class ServerMonitorPlugin(Star):
                 points = int((getattr(request, "query", {}) or {}).get("points") or 0)
             except Exception:
                 points = 0
-            return self._json(self.service.build_overview(points or None))
+            data = self.service.build_overview(points or None)
+            try:
+                data["plugin_version"] = PLUGIN_VERSION
+            except Exception:
+                pass
+            return self._json(data)
         except Exception as e:
             logger.error(f"[server_monitor] overview 接口异常: {e}\n{traceback.format_exc()}")
             return self._err(f"获取监控数据失败: {e}")
