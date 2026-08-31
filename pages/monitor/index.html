@@ -1,0 +1,2100 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="assets/xterm.min.css">
+<title>服务器监控</title>
+<script src="assets/xterm.min.js"></script>
+<script>
+window.__errs = [];
+window.onerror = function (m, s, l) { (window.__errs = window.__errs || []).push(m + ' @' + l); return false; };
+window.addEventListener('unhandledrejection', function (e) {
+  (window.__errs = window.__errs || []).push('rej: ' + (e.reason && e.reason.message || e.reason));
+});
+</script>
+<style>
+  /* ============ 设计令牌（palette 式：透明背景 / 墨水文字 / 液态玻璃 rim） ============ */
+  :root {
+    --ink: rgba(18, 18, 20, 0.96);
+    --ink-soft: rgba(18, 18, 20, 0.76);
+    --ink-muted: rgba(18, 18, 20, 0.55);
+    --ok: #177a4c; --warn: #9a6700; --err: #b3261e; --accent: #2f6bdb; --violet: #7c4fe0;
+    --cs: light;
+    --track: rgba(18, 18, 20, 0.12);
+    --grid: rgba(18, 18, 20, 0.08);
+    --fill: rgba(255, 255, 255, 0.045);
+    --fill-strong: rgba(255, 255, 255, 0.10);
+    --control-bg: rgba(255, 255, 255, 0.05);
+    --rim:
+      inset 0 0 0 0.8px rgba(255, 255, 255, 0.36),
+      inset 0 1.2px 1px rgba(255, 255, 255, 0.5),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.05),
+      0 10px 30px rgba(0, 0, 0, 0.11),
+      0 1px 3px rgba(0, 0, 0, 0.07);
+    --rim-soft:
+      inset 0 0 0 0.7px rgba(255, 255, 255, 0.28),
+      inset 0 1px 1px rgba(255, 255, 255, 0.34),
+      0 6px 18px rgba(0, 0, 0, 0.08);
+    --separator: rgba(18, 18, 20, 0.10);
+    --tshadow: 0 1px 4px rgba(255, 255, 255, 0.5), 0 0 1px rgba(255, 255, 255, 0.35);
+  }
+  :root[data-theme="dark"] {
+    --ink: rgba(248, 248, 250, 0.96);
+    --ink-soft: rgba(248, 248, 250, 0.76);
+    --ink-muted: rgba(248, 248, 250, 0.52);
+    --ok: #4ade80; --warn: #fbbf24; --err: #fb7185; --accent: #7aa2ff; --violet: #b28aff;
+    --cs: dark;
+    --track: rgba(255, 255, 255, 0.10);
+    --grid: rgba(255, 255, 255, 0.07);
+    --fill: rgba(10, 12, 18, 0.30);
+    --fill-strong: rgba(255, 255, 255, 0.06);
+    --control-bg: rgba(255, 255, 255, 0.05);
+    --rim:
+      inset 0 0 0 0.8px rgba(255, 255, 255, 0.16),
+      inset 0 1.2px 1px rgba(255, 255, 255, 0.26),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.28),
+      0 12px 34px rgba(0, 0, 0, 0.34),
+      0 1px 3px rgba(0, 0, 0, 0.2);
+    --rim-soft:
+      inset 0 0 0 0.7px rgba(255, 255, 255, 0.13),
+      inset 0 1px 1px rgba(255, 255, 255, 0.18),
+      0 8px 22px rgba(0, 0, 0, 0.22);
+    --separator: rgba(255, 255, 255, 0.10);
+    --tshadow: 0 1px 4px rgba(0, 0, 0, 0.42), 0 -1px 3px rgba(0, 0, 0, 0.18);
+  }
+  * { box-sizing: border-box; }
+  html, body { background: transparent; margin: 0; min-height: 100%; }
+  body.demo {
+    background:
+      radial-gradient(1000px 700px at 80% -10%, #232a3d, transparent 60%),
+      radial-gradient(900px 700px at -10% 110%, #1d3a33, transparent 55%),
+      #101218;
+  }
+  body {
+    color: var(--ink);
+    font: 13.5px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+          "PingFang SC", Inter, "Microsoft YaHei", system-ui, sans-serif;
+    text-rendering: geometricPrecision;
+    -webkit-font-smoothing: antialiased;
+    text-shadow: var(--tshadow);
+  }
+
+  svg.ic {
+    width: 1.05em; height: 1.05em; flex: none;
+    stroke: currentColor; fill: none;
+    stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+    vertical-align: -0.14em;
+  }
+  svg.ic.lg { width: 1.3em; height: 1.3em; }
+
+  .glass {
+    background: var(--fill);
+    backdrop-filter: blur(14px) saturate(130%) brightness(1.03);
+    -webkit-backdrop-filter: blur(14px) saturate(130%) brightness(1.03);
+    border-radius: 22px;
+    box-shadow: var(--rim);
+    position: relative;
+  }
+
+  #app { position: relative; z-index: 1; padding: 12px 16px 24px; }
+
+  /* ============ 顶栏 ============ */
+  header.topbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 6px 8px; max-width: 1400px; margin: 0 auto;
+  }
+  header.topbar h1 {
+    margin: 0; font-size: 16px; font-weight: 700; letter-spacing: .2px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .spacer { flex: 1; }
+  .conn { display: flex; align-items: center; gap: 7px; color: var(--ink-muted); font-size: 12.5px; white-space: nowrap; }
+  .led { width: 8px; height: 8px; border-radius: 50%; background: var(--err); flex: none; transition: background .3s; }
+  .led.ok { background: var(--ok); }
+
+  select, button, input.num {
+    appearance: none; -webkit-appearance: none;
+    background: var(--control-bg); color: var(--ink);
+    border: 0; border-radius: 999px;
+    box-shadow: var(--rim-soft);
+    padding: 6px 13px; font: inherit; font-size: 12.5px; cursor: pointer; outline: none;
+    backdrop-filter: blur(10px) saturate(120%);
+    -webkit-backdrop-filter: blur(10px) saturate(120%);
+    transition: transform .15s ease;
+    text-shadow: none;
+  }
+  /* 原生下拉弹层跟随明暗主题（只作用于控件，不影响页面透明画布） */
+  select, .menu, .p-editor { color-scheme: var(--cs); }
+  input.num { width: 74px; text-align: center; padding: 6px 8px; cursor: text; }
+  button { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+  button:active, select:active { transform: scale(.96); }
+  .selwrap { position: relative; display: inline-flex; align-items: center; }
+  .selwrap::after {
+    content: ""; position: absolute; right: 13px; top: 50%; margin: 0;
+    width: 6px; height: 6px; pointer-events: none;
+    border-right: 1.6px solid var(--ink-muted); border-bottom: 1.6px solid var(--ink-muted);
+    transform: translateY(-70%) rotate(45deg);
+  }
+  select { padding-right: 32px; }
+
+  /* 添加面板菜单 */
+  .menu {
+    position: absolute; z-index: 30; right: 0; top: calc(100% + 8px);
+    min-width: 210px; padding: 8px; border-radius: 18px;
+    display: none; flex-direction: column; gap: 2px;
+    background: var(--fill-strong);
+    backdrop-filter: blur(22px) saturate(140%);
+    -webkit-backdrop-filter: blur(22px) saturate(140%);
+    box-shadow: var(--rim);
+  }
+  .menu.open { display: flex; }
+  .menu button {
+    background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+    border-radius: 12px; padding: 8px 12px; justify-content: flex-start; font-weight: 500;
+  }
+  .menu button:hover { background: var(--fill-strong); }
+  .menu .sep { height: 1px; background: var(--separator); margin: 5px 6px; }
+  .menu .muted { color: var(--ink-muted); font-size: 11px; padding: 4px 12px 2px; }
+  .menu .none { color: var(--ink-muted); font-size: 11.5px; padding: 4px 12px 6px; }
+  .menu .lrow { display: flex; align-items: center; gap: 6px; padding: 2px 6px 4px; }
+  .menu input.lname {
+    flex: 1; min-width: 0; background: var(--control-bg); border: 0; border-radius: 10px;
+    padding: 6px 10px; color: var(--ink); font: inherit; font-size: 12px; outline: none;
+    box-shadow: var(--rim-soft); text-shadow: none;
+  }
+  .menu input.lname::placeholder { color: var(--ink-muted); }
+  .menu .lrow button { padding: 6px 10px; flex: none; }
+  .menu .myitem { display: flex; align-items: center; }
+  .menu .myitem > button:first-child { flex: 1; justify-content: flex-start; min-width: 0; }
+  .menu .myitem .sub2 { color: var(--ink-muted); font-size: 10.5px; margin-left: 6px; }
+  .menu .mydel {
+    background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+    color: var(--ink-muted); border-radius: 8px; padding: 5px 6px; flex: none;
+  }
+  .menu .mydel:hover { color: var(--err); background: var(--fill-strong); }
+
+  /* ============ 提示条 ============ */
+  #banner {
+    display: none; max-width: 1400px; margin: 8px auto 0; padding: 9px 16px;
+    border-radius: 16px; font-size: 13px;
+    align-items: center; gap: 8px;
+  }
+  #banner.show { display: flex; }
+  #banner.warn { background: color-mix(in srgb, var(--warn) 14%, transparent); }
+  #banner.err { background: color-mix(in srgb, var(--err) 16%, transparent); }
+  #banner svg.ic { color: var(--warn); }
+  #banner.err svg.ic { color: var(--err); }
+
+  main { max-width: 1400px; margin: 0 auto; }
+
+  /* ============ 面板网格（4 列，自由拼接，同行等高） ============ */
+  #board {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px;
+    margin-top: 12px;
+  }
+  @media (max-width: 1050px) { #board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 640px) { #board { grid-template-columns: 1fr; } }
+  .panel { padding: 0; min-width: 0;
+    display: flex; flex-direction: column; align-items: stretch;
+    animation: rise .5s cubic-bezier(.22,.9,.28,1) both; animation-delay: var(--d, 0ms);
+    transition: box-shadow .25s, transform .35s cubic-bezier(.22,.9,.28,1);
+  }
+  .panel:hover { transform: translateY(-2px); }
+  .p-head { flex: none; }
+  .p-editor { flex: none; }
+  .p-body { flex: 1 1 auto; padding: 10px 16px 14px; min-height: 40px; }
+  .p-body canvas { display: block; width: 100%; }
+  .muted { color: var(--ink-muted); }
+  .empty-line { color: var(--ink-muted); text-align: center; padding: 18px 0; font-size: 12.5px; }
+
+  .p-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px 0; flex: none; }
+  .grip {
+    display: inline-flex; color: var(--ink-muted); cursor: grab; touch-action: none;
+    border-radius: 8px; padding: 2px;
+  }
+  .grip:active { cursor: grabbing; }
+  .p-title { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .p-title svg.ic { color: var(--ink-muted); }
+  .p-badge {
+    font-size: 11px; color: var(--ink-soft); padding: 1px 9px; border-radius: 999px;
+    background: var(--fill-strong); box-shadow: var(--rim-soft);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%;
+  }
+  .pbtn {
+    background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+    color: var(--ink-muted); padding: 4px 6px; border-radius: 9px;
+  }
+  .pbtn:hover { color: var(--ink); background: var(--fill-strong); }
+  .pbtn.danger:hover { color: var(--err); }
+  .p-editor {
+    display: none; flex-wrap: wrap; gap: 6px 10px; align-items: center;
+    margin: 8px 16px 0; padding: 8px 10px; border-radius: 14px;
+    background: var(--fill-strong); box-shadow: var(--rim-soft); font-size: 12px;
+  }
+  .p-editor.open { display: flex; }
+  .p-editor label { color: var(--ink-muted); display: inline-flex; align-items: center; gap: 5px; }
+  .p-editor select { padding: 3px 30px 3px 12px; font-size: 12px; min-width: 92px; }
+  .p-editor .selwrap::after { right: 12px; }
+  .p-body { flex: 1 1 auto; padding: 10px 16px 14px; min-height: 40px; }
+  .p-body canvas { display: block; width: 100%; }
+  .muted { color: var(--ink-muted); }
+  .empty-line { color: var(--ink-muted); text-align: center; padding: 18px 0; font-size: 12.5px; }
+
+  /* 宽度 = 网格列跨度（响应式下自动收敛） */
+  .panel[data-span="1"] { grid-column: span 1; }
+  .panel[data-span="2"] { grid-column: span 2; }
+  .panel[data-span="3"] { grid-column: span 3; }
+  .panel[data-span="4"] { grid-column: span 4; }
+  @media (max-width: 1050px) {
+    .panel[data-span="3"], .panel[data-span="4"] { grid-column: span 2; }
+  }
+  @media (max-width: 640px) {
+    .panel[data-span="1"], .panel[data-span="2"], .panel[data-span="3"], .panel[data-span="4"] { grid-column: span 1; }
+  }
+
+  /* 拖拽（桌面式：卡片跟手浮动 + 其余卡片实时让位） */
+  body.dragging { cursor: grabbing; user-select: none; -webkit-user-select: none; }
+  body.dragging .panel { transition: none; }
+  .panel.drag-ghost { opacity: .28; outline: 1.5px dashed var(--ink-muted); outline-offset: -4px; }
+  .drag-clone {
+    position: fixed; z-index: 999; margin: 0 !important;
+    pointer-events: none; opacity: .96;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, .45), var(--rim);
+    transform: scale(1.02) rotate(.5deg);
+    will-change: left, top;
+  }
+  .drag-clone .p-editor, .drag-clone .p-gear, .drag-clone .rz { display: none !important; }
+  .p-body.hfixed { overflow-y: auto; display: flex; flex-direction: column; }
+  .p-body.hfixed .term-wrap { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+  .p-body.hfixed .term-out { flex: 1 1 auto; height: auto; min-height: 140px; }
+  .p-body.hfixed .rows, .p-body.hfixed .kv { overflow-y: auto; }
+  .term-auto-l { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+  .term-auto-l input { accent-color: var(--accent); margin: 0; }
+  /* 右下角拖拽调宽把手 */
+  .rz {
+    position: absolute; right: 4px; bottom: 4px; width: 20px; height: 20px;
+    display: flex; align-items: flex-end; justify-content: flex-end;
+    color: var(--ink-muted); opacity: .5; cursor: nwse-resize; touch-action: none;
+    border-radius: 6px; padding: 2px; z-index: 3;
+  }
+  .rz:hover { opacity: 1; color: var(--accent); }
+  .rz svg { width: 13px; height: 13px; transform: rotate(45deg); }
+  body.rz-dragging, body.rz-dragging * { cursor: ew-resize !important; user-select: none !important; }
+
+  /* ============ 服务器卡片部件 ============ */
+  .card-top { display: flex; align-items: center; gap: 8px; }
+  .card-top .nm { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 7px; }
+  .card-top .nm svg.ic { color: var(--ink-muted); }
+  .chip {
+    font-size: 11px; padding: 2px 9px; border-radius: 999px; color: var(--ink-soft);
+    background: var(--fill-strong); box-shadow: var(--rim-soft); flex: none;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .up { margin-left: auto; color: var(--ink-muted); font-size: 12px; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
+  .sub { color: var(--ink-muted); font-size: 12px; margin: 5px 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .rings { display: flex; justify-content: space-around; gap: 8px; margin: 10px 0 6px; }
+  .ring { width: 96px; position: relative; display: flex; flex-direction: column; align-items: center; }
+  .ring svg.gauge { width: 88px; height: 88px; transform: rotate(-90deg); display: block; }
+  .ring .rt { fill: none; stroke: var(--track); stroke-width: 8; }
+  .ring .rv { fill: none; stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset .9s cubic-bezier(.25,.9,.3,1), stroke .4s; }
+  .rlab { position: absolute; top: 0; left: 0; right: 0; height: 88px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+  .rlab b { font-size: 14.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .rlab span { font-size: 10.5px; color: var(--ink-muted); margin-top: -2px; display: flex; align-items: center; gap: 4px; }
+
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px; font-size: 12.5px; margin-top: 6px; }
+  .stats .k { color: var(--ink-muted); display: inline-flex; align-items: center; gap: 5px; }
+  .stats > div { min-width: 0; font-variant-numeric: tabular-nums; }
+  .stats > div.wide { grid-column: 1 / -1; }
+  .panel[data-span="1"] .stats { grid-template-columns: 1fr; }
+  .panel[data-span="1"] .stats > div.wide { grid-column: auto; }
+  .panel[data-span="1"] .rings { flex-direction: column; align-items: center; gap: 2px; }
+
+  .disks { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .dbar { display: flex; align-items: center; gap: 8px; font-size: 11.5px; }
+  .dbar .mount { flex: none; max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dbar .trk { flex: 1; height: 6px; border-radius: 99px; background: var(--track); overflow: hidden; }
+  .dbar .fil { height: 100%; border-radius: 99px; display: block; transition: width .9s cubic-bezier(.25,.9,.3,1), background .4s; }
+  .dbar .m { color: var(--ink-muted); flex: none; font-variant-numeric: tabular-nums; }
+
+  .errbox {
+    margin-top: 10px; padding: 9px 12px; border-radius: 14px; font-size: 12.5px;
+    display: flex; gap: 8px; align-items: flex-start;
+    background: color-mix(in srgb, var(--err) 13%, transparent);
+    color: var(--ink); word-break: break-all;
+  }
+  .errbox svg.ic { color: var(--err); margin-top: 2px; }
+
+  .sparkbox { margin-top: 10px; }
+  .legend { display: flex; gap: 12px; font-size: 11px; color: var(--ink-muted); margin-bottom: 3px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+  canvas.spark { height: 52px; }
+  canvas.chart { height: 190px; }
+
+  .fresh {
+    margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--separator);
+    color: var(--ink-muted); font-size: 11px; display: flex; gap: 6px; align-items: center;
+  }
+  .fresh .stale-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); flex: none; }
+  .fresh.stale { color: var(--warn); }
+  .fresh.stale .stale-dot { background: var(--warn); animation: blink 1.4s infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+
+  /* ============ 列表类面板（进程/容器/探活/告警） ============ */
+  .rows { display: flex; flex-direction: column; gap: 2px; }
+  .rline {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px;
+    font-size: 12.5px; min-width: 0;
+  }
+  .rline:nth-child(odd) { background: var(--fill-strong); }
+  .rline .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rline .val { color: var(--ink-soft); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .rline .sub2 { color: var(--ink-muted); font-size: 11px; }
+  .sdot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 5px 14px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .kv .k { color: var(--ink-muted); display: inline-flex; align-items: center; gap: 6px; }
+
+  /* LLM 统计 */
+  .big4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }  .big4 .b4 {
+    background: var(--fill-strong); box-shadow: var(--rim-soft); border-radius: 14px;
+    padding: 8px 10px; text-align: center; min-width: 0;
+  }
+  .big4 .b4 b { display: block; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .big4 .b4 span { font-size: 10.5px; color: var(--ink-muted); white-space: nowrap; }
+  .big4 .b4 span i { font-style: normal; }
+  canvas.llmchart { height: 110px; }
+  .panel[data-span="1"] .big4 { grid-template-columns: repeat(2, 1fr); }
+  .panel[data-span="1"] canvas.llmchart { height: 90px; }
+
+  /* 终端（Gnome 终端风格：标签栏 + 纯黑背景 + 均质等宽字体） */
+  .term-wrap { display: flex; flex-direction: column; }
+  .term-bar {
+    display: flex; align-items: stretch; gap: 0;
+    border-bottom: 1px solid var(--grid); margin-bottom: 0;
+    overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+  }
+  .term-bar::-webkit-scrollbar { display: none; }
+  .term-bar .selwrap select { padding: 4px 30px 4px 12px; font-size: 12px; }
+  .term-bar .hint { color: var(--ink-muted); font-size: 11px; }
+  .term-out {
+    background: #1a1721;
+    color: #d8d3c8;
+    border-radius: 0 0 14px 14px;
+    padding: 10px 14px;
+    height: 320px;
+    overflow-y: auto;
+    font: 12.5px/1.6 ui-monospace, "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
+    text-shadow: none;
+  }
+  .term-out::-webkit-scrollbar { width: 8px; }
+  .term-out::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 4px; }
+  .term-line { white-space: pre-wrap; }
+  .term-line .t-prompt { color: #5eead4; }
+  .term-line .t-ok { color: #d7e3f4; }
+  .term-line .t-err { color: #fb7185; }
+  .term-line .t-meta { color: #64748b; font-size: 11px; }
+  /* 终端面板：输出区始终充满面板（跟随宽度/高度变化） */
+  .panel[data-type="term"] .p-body { display: flex; flex-direction: column; }
+  .panel[data-type="term"] .term-wrap { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+  .panel[data-type="term"] .term-out { flex: 1 1 auto; height: auto; min-height: 140px; }
+  .term-out { position: relative; }
+  .term-out .xterm { padding: 2px 4px; }
+  .ttabs { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  .ttab {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px;
+    background: transparent; border: 0; color: var(--ink-muted);
+    cursor: pointer; font-size: 12.5px; min-width: 0; position: relative;
+  }
+  .ttab:hover { color: var(--ink-soft); background: var(--fill); }
+  .ttab.active { color: var(--ink); background: var(--fill-strong); }
+  .ttab .tx { color: var(--ink-muted); padding: 0 3px; border-radius: 6px; cursor: pointer; }
+  .ttab .tx:hover { color: var(--err); background: var(--fill-strong); }
+  .tt-new { padding: 4px 8px; }
+  .term-tabbox { position: absolute; inset: 0; }
+  .term-tabbox[hidden] { display: none; }
+  .term-out .xterm-viewport { background: transparent !important; }
+  .panel[data-span="1"] .term-out, .panel[data-span="2"] .term-out { height: 240px; }
+
+  footer { text-align: center; color: var(--ink-muted); font-size: 11.5px; padding: 14px 0 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    .panel, .ring .rv, .dbar .fil { transition: none; animation: none; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></symbol>
+    <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M15 20v2M2 15h2M2 9h2M20 15h2M20 9h2M9 2v2M9 20v2"/></symbol>
+    <symbol id="i-ram" viewBox="0 0 24 24"><path d="M6 19v-3M10 19v-3M14 19v-3M18 19v-3M8 11V9M16 11V9M12 11V9M2 15h20M2 7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1Z"/></symbol>
+    <symbol id="i-hdd" viewBox="0 0 24 24"><path d="M22 12H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+    <symbol id="i-thermo" viewBox="0 0 24 24"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/></symbol>
+    <symbol id="i-gauge" viewBox="0 0 24 24"><path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></symbol>
+    <symbol id="i-swap" viewBox="0 0 24 24"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+    <symbol id="i-warn" viewBox="0 0 24 24"><path d="M21.73 18l-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+    <symbol id="i-term" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></symbol>
+    <symbol id="i-grip" viewBox="0 0 24 24"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></symbol>
+    <symbol id="i-bot" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></symbol>
+    <symbol id="i-coins" viewBox="0 0 24 24"><circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/><path d="m16.71 13.88.7.71-2.82 2.82"/></symbol>
+  </defs>
+</svg>
+
+<div id="app">
+  <header class="topbar">
+    <h1><svg class="ic lg"><use href="#i-server"/></svg>服务器监控</h1>
+    <span class="conn"><span class="led" id="connDot"></span><span id="connText">连接中…</span></span>
+    <span class="spacer"></span>
+    <label class="conn">刷新 <input class="num" id="intervalNum" type="number" min="1" max="3600" value="5"> 秒</label>
+    <button id="refreshBtn"><svg class="ic"><use href="#i-refresh"/></svg>刷新</button>
+    <div style="position:relative">
+      <button id="addBtn"><svg class="ic"><use href="#i-plus"/></svg>添加面板</button>
+      <div class="menu glass" id="addMenu"></div>
+    </div>
+    <div style="position:relative">
+      <button id="layoutBtn" title="预设与自定义布局"><svg class="ic"><use href="#i-grid"/></svg>布局</button>
+      <div class="menu glass" id="layoutMenu"></div>
+    </div>
+  </header>
+
+  <div id="banner" class="glass"><svg class="ic"><use href="#i-warn"/></svg><span id="bannerText"></span></div>
+
+  <main>
+    <div id="board"></div>
+    <footer id="foot">数据由 AstrBot 插件 astrbot_plugin_server_monitor 提供</footer>
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ================= 常量与状态 ================= */
+  var TYPES = {
+    server: { name: "服务器卡片", icon: "server",  per: true,  span: 2 },
+    charts: { name: "历史图表",   icon: "pulse",   per: true,  span: 2 },
+    info:   { name: "系统信息",   icon: "list",    per: true,  span: 1 },
+    procs:  { name: "Top 进程",   icon: "list",    per: true,  span: 2 },
+    docker: { name: "Docker 容器", icon: "box",    per: true,  span: 2 },
+    term:   { name: "终端",       icon: "term",    per: true,  span: 4 },
+    ports:  { name: "端口探活",   icon: "wifi",    per: false, span: 2 },
+    http:   { name: "HTTP 探活",  icon: "cloud",   per: false, span: 2 },
+    llm:    { name: "模型调用",   icon: "bot",     per: false, span: 2 },
+    balance:{ name: "模型余额",   icon: "coins",   per: false, span: 1 },
+    alerts: { name: "告警记录",   icon: "warn",    per: false, span: 2 }
+  };
+  var INTERVALS = [[0, "跟随全局"], [3, "3 秒"], [5, "5 秒"], [10, "10 秒"], [15, "15 秒"], [30, "30 秒"], [60, "1 分钟"], [120, "2 分钟"], [300, "5 分钟"]];
+  var SPANS = [[1, "¼ 宽"], [2, "半宽"], [3, "¾ 宽"], [4, "整行"]];
+
+  var S = {
+    bridge: null, ctx: { isDark: true },
+    data: null, interval: 5, busy: false,
+    demo: false, demoState: null,
+    layout: [], auto: true,
+    el: {}, builtKey: "",
+    lastFetch: 0, rendered: {}, termAuto: true,
+    uid: (Date.now() % 1e7) * 100,
+    _drag: null
+  };
+  var $ = function (id) { return document.getElementById(id); };
+  function uid() { return "p" + (++S.uid).toString(36); }
+  function icon(n, cls) { return '<svg class="ic' + (cls ? " " + cls : "") + '"><use href="#i-' + n + '"/></svg>'; }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function fmtBytes(v) {
+    v = Number(v) || 0;
+    var u = ["B", "KB", "MB", "GB", "TB", "PB"], i = 0;
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    return (i === 0 ? v.toFixed(0) : v.toFixed(1)) + " " + u[i];
+  }
+  function fmtRate(v) { return fmtBytes(v) + "/s"; }
+  function fmtUptime(sec) {
+    sec = Math.max(0, Math.floor(Number(sec) || 0));
+    var d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+    if (d) return d + " 天 " + h + " 小时";
+    if (h) return h + " 小时 " + m + " 分";
+    return m + " 分钟";
+  }
+  function fmtTime(ts) {
+    var d = new Date((Number(ts) || 0) * 1000);
+    if (isNaN(d.getTime())) return "--:--:--";
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+  function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim() || "#888"; }
+  function pairSet() {
+    // 图表配色随明暗主题切换（浅色下用更深的色阶保证对比度）
+    if (S.ctx.isDark === false) {
+      return {
+        cpu: ["#7ea6f0", "#3565c0"], mem: ["#b394f2", "#7c4fe0"], disk: ["#57cfb8", "#0f9d8a"],
+        warn: ["#e8a23d", "#b57509"], err: ["#f08a8a", "#d64541"], off: ["#a7adbd", "#767c8a"]
+      };
+    }
+    return {
+      cpu: ["#8fb4ff", "#5b8cff"], mem: ["#c9a4ff", "#8b5cf6"], disk: ["#7ef0d4", "#14b8a6"],
+      warn: ["#ffd98a", "#f59e0b"], err: ["#ffa4b3", "#f43f5e"], off: ["#9aa0b4", "#6b7280"]
+    };
+  }
+  function pairFor(base, p) {
+    if (p == null || isNaN(p)) return pairSet().off;
+    if (p >= 85) return pairSet().err;
+    if (p >= 60) return pairSet().warn;
+    return pairSet()[base] || pairSet().cpu;
+  }
+
+  /* ================= Bridge / 数据源 ================= */
+  async function resolveBridge(maxMs) {
+    var t0 = Date.now();
+    while (Date.now() - t0 < maxMs) {
+      if (window.AstrBotPluginPage) {
+        try {
+          var obj = await window.AstrBotPluginPage;
+          if (obj) {
+            if (obj.bridge && typeof obj.bridge === "object") return obj.bridge;
+            if (typeof obj.ready === "function" || typeof obj.apiGet === "function") return obj;
+          }
+        } catch (e) { return null; }
+      }
+      await sleep(100);
+    }
+    return null;
+  }
+  function withTimeout(promise, ms) {
+    return Promise.race([Promise.resolve(promise), sleep(ms).then(function () { return null; })]);
+  }
+  async function fetchOverview() {
+    if (S.bridge) {
+      var res = await S.bridge.apiGet("overview", { _t: Date.now() });
+      if (res == null) throw new Error("空响应");
+      if (res.status === false || res.status === "error") throw new Error(res.message || "接口返回错误");
+      return (res && res.data !== undefined && res.data !== null) ? res.data : res;
+    }
+    return demoData();
+  }
+
+  /* ================= 预览模拟数据 ================= */
+  function mkWalk(start, min, max, step) {
+    return { v: start, min: min, max: max, step: step,
+      next: function () {
+        this.v += (Math.random() - 0.5) * 2 * this.step;
+        this.v = Math.max(this.min, Math.min(this.max, this.v));
+        return Math.round(this.v * 10) / 10;
+      } };
+  }
+  function mkHist() { return { ts: [], cpu: [], mem: [], swap: [], net_rx: [], net_tx: [], disk: [] }; }
+  function seedDemo() {
+    S.demoState = {
+      cpu: mkWalk(28, 4, 96, 7), mem: mkWalk(55, 22, 95, 2.4),
+      rcpu: mkWalk(14, 2, 88, 6), rmem: mkWalk(40, 12, 92, 3),
+      net: mkWalk(4, 0.2, 45, 3.5), rnet: mkWalk(1.5, 0.1, 9, 1.2),
+      hist: mkHist(), rhist: mkHist(), rx: 1.2e11, tx: 6e10
+    };
+    var now = Date.now() / 1000 - 150;
+    for (var i = 0; i < 40; i++) pushDemo(now + i * 5);
+  }
+  function pushDemo(ts) {
+    var d = S.demoState;
+    d.cpu.next(); d.mem.next(); d.rcpu.next(); d.rmem.next(); d.net.next(); d.rnet.next();
+    d.rx += d.net.v * 1048576 * 5; d.tx += d.net.v * 314572.8 * 5;
+    var rows = [
+      [d.hist, d.cpu.v, d.mem.v, 3.1, d.net.v * 1048576, d.net.v * 314572.8, 46.2],
+      [d.rhist, d.rcpu.v, d.rmem.v, 0, d.rnet.v * 1048576, d.rnet.v * 524288, 61.4]
+    ];
+    rows.forEach(function (r) {
+      var h = r[0];
+      h.ts.push(ts); h.cpu.push(r[1]); h.mem.push(r[2]); h.swap.push(r[3]);
+      h.net_rx.push(r[4]); h.net_tx.push(r[5]); h.disk.push(r[6]);
+      if (h.ts.length > 160) ["ts","cpu","mem","swap","net_rx","net_tx","disk"].forEach(function (k) { h[k].shift(); });
+    });
+  }
+  function demoLLM(ts) {
+    var minute = [];
+    for (var i = 0; i < 60; i++) minute.push(Math.max(0, Math.round(Math.sin(i / 5) * 4 + Math.random() * 5)));
+    return {
+      today: { calls: 128, ok: 126, err: 2, input: 84210, cached: 51030, output: 21340,
+               cache_hit: 60.7, avg_ms: 1420 },
+      rpm5: 9, inflight: 1,
+      minute_calls: minute,
+      models: {
+        "deepseek-chat": { calls: 86, ok: 85, err: 1, input: 52000, cached: 38400, output: 14200, cache_hit: 73.8, avg_ms: 1180 },
+        "qwen-max": { calls: 32, ok: 31, err: 1, input: 24500, cached: 9800, output: 5600, cache_hit: 40.0, avg_ms: 2100 },
+        "gpt-4o-mini": { calls: 10, ok: 10, err: 0, input: 7710, cached: 2830, output: 1540, cache_hit: 36.7, avg_ms: 960 }
+      },
+      recent: [
+        { ts: ts - 8, model: "deepseek-chat", ok: true, input: 2100, cached: 1600, output: 380, dur: 1.24 },
+        { ts: ts - 26, model: "qwen-max", ok: true, input: 980, cached: 310, output: 210, dur: 2.05 },
+        { ts: ts - 74, model: "deepseek-chat", ok: false, input: 0, cached: 0, output: 0, dur: null }
+      ],
+      days: {}
+    };
+  }
+  function demoData() {
+    var d = S.demoState, ts = Date.now() / 1000;
+    pushDemo(ts);
+    return {
+      ok: true, now: ts, local_interval: 5, remote_interval: 60,
+      llm: demoLLM(ts),
+      balances: [
+        { name: "DeepSeek", type_name: "DeepSeek", ok: true, currency: "CNY", total: 42.53, granted: 10.0, used: null, ts: ts - 120 },
+        { name: "Kimi", type_name: "Moonshot (Kimi)", ok: true, currency: "CNY", total: 15.2, granted: 0, used: null, ts: ts - 120 },
+        { name: "OpenAI", type_name: "OpenAI Billing", ok: false, error: "HTTP 401: incorrect API key", ts: ts - 180 }
+      ],
+      probes: {
+        interval: 30,
+        tcp: [
+          { name: "SSH", host: "203.0.113.10", port: 22, ok: true, latency_ms: 38.2, error: null, ts: ts },
+          { name: "MySQL", host: "198.51.100.6", port: 3306, ok: false, latency_ms: null, error: "连接超时（5s）", ts: ts - 30 },
+          { name: "Redis", host: "203.0.113.10", port: 6379, ok: true, latency_ms: 39.1, error: null, ts: ts }
+        ],
+        http: [
+          { name: "官网", url: "https://example.com", method: "GET", expected: 200, code: 200, ok: true, latency_ms: 126, error: null, ts: ts },
+          { name: "API", url: "https://api.example.com/health", method: "GET", expected: 200, code: 503, ok: false, latency_ms: 88, error: "状态码 503 ≠ 期望 200", ts: ts }
+        ]
+      },
+      alerts: [
+        { ts: ts - 300, level: "recovery", text: "🟢 [服务器监控] web-1 CPU 使用率已恢复正常" },
+        { ts: ts - 420, level: "alert", text: "🔴 [服务器监控] web-1 CPU 使用率 92.3%" },
+        { ts: ts - 600, level: "alert", text: "🔴 [服务器监控] db-1 服务器离线（SSH 采集失败: Connection timed out）" }
+      ],
+      servers: {
+        local: {
+          name: "local", display_name: "本机（模拟）", mode: "local", host: "AstrBot 所在机器",
+          snapshot: {
+            ts: ts, online: true, error: null, hostname: "demo-host", os: "Ubuntu 22.04", arch: "x86_64",
+            uptime: 86400 * 12 + 3600 * 5, cpu_percent: d.cpu.v, cpu_cores: 8, load: [0.52, 0.48, 0.45],
+            mem: { total: 17179869184, used: 17179869184 * d.mem.v / 100, percent: d.mem.v,
+                   swap_total: 4294967296, swap_used: 133169152, swap_percent: 3.1 },
+            disks: [
+              { mount: "/", total: 512110190592, used: 512110190592 * .462, percent: 46.2 },
+              { mount: "/data", total: 2199023255552, used: 2199023255552 * .77, percent: 77 }
+            ],
+            net: { rx_rate: d.net.v * 1048576, tx_rate: d.net.v * 314572.8, rx_total: d.rx, tx_total: d.tx },
+            temp: 52, proc: { cpu: 2.1, mem: 8.4, rss: 286326784 },
+            top_procs: [
+              { pid: 1234, name: "python3", cpu: 12.4, mem: 8.4 },
+              { pid: 88, name: "mysqld", cpu: 4.2, mem: 15.2 },
+              { pid: 233, name: "nginx", cpu: 1.1, mem: 1.2 },
+              { pid: 7, name: "systemd", cpu: 0.3, mem: 0.4 }
+            ],
+            docker: [
+              { name: "web-app", state: "running", status: "Up 3 days" },
+              { name: "redis", state: "running", status: "Up 5 days" },
+              { name: "old-job", state: "exited", status: "Exited (0) 2 hours ago" }
+            ]
+          },
+          history: d.hist
+        },
+        "web-1": {
+          name: "web-1", display_name: "web-1（模拟）", mode: "ssh", host: "203.0.113.10",
+          snapshot: {
+            ts: ts, online: true, error: null, hostname: "web-1", os: "Debian 12", arch: "x86_64",
+            uptime: 86400 * 3, cpu_percent: d.rcpu.v, cpu_cores: 2, load: [0.12, 0.2, 0.18],
+            mem: { total: 2147483648, used: 2147483648 * d.rmem.v / 100, percent: d.rmem.v,
+                   swap_total: 0, swap_used: 0, swap_percent: 0 },
+            disks: [{ mount: "/", total: 42949672960, used: 26365239206, percent: 61.4 }],
+            net: { rx_rate: d.rnet.v * 1048576, tx_rate: d.rnet.v * 524288, rx_total: 9e10, tx_total: 4e10 },
+            temp: null, proc: null,
+            top_procs: [{ pid: 900, name: "python3", cpu: 3.5, mem: 6.1 }, { pid: 401, name: "sshd", cpu: 0.2, mem: 0.5 }],
+            docker: [{ name: "nginx-proxy", state: "running", status: "Up 12 days" }]
+          },
+          history: d.rhist
+        },
+        "db-1": {
+          name: "db-1", display_name: "db-1（模拟）", mode: "ssh", host: "198.51.100.6",
+          snapshot: { ts: ts - 300, online: false, error: "SSH 采集失败: Connection timed out" },
+          history: null
+        }
+      }
+    };
+  }
+
+  /* ================= 主题 / 状态 ================= */
+  function applyTheme() {
+    document.documentElement.setAttribute("data-theme", S.ctx.isDark === false ? "light" : "dark");
+  }
+  function setBanner(type, msg) {
+    var b = $("banner");
+    if (!type) { b.className = "glass"; $("bannerText").textContent = ""; return; }
+    b.className = "glass show " + type;
+    $("bannerText").textContent = msg;
+  }
+  function setStatus(ok, msg) {
+    $("connDot").className = "led" + (ok ? " ok" : "");
+    $("connText").textContent = ok
+      ? (S.demo ? "预览模式（模拟数据）" : "已连接") + " · " + fmtTime(Date.now() / 1000)
+      : "连接失败：" + (msg || "未知错误");
+  }
+  function serverNames() { return Object.keys((S.data && S.data.servers) || {}); }
+  function srvOf(name) { return (S.data && S.data.servers[name]) || null; }
+  function dispName(name) {
+    var s = srvOf(name);
+    return (s && s.display_name) || name;
+  }
+
+  /* ================= 布局持久化 =================
+     插件 Pages 的 iframe 是沙箱（无 allow-same-origin），localStorage 会抛
+     SecurityError —— 因此布局/刷新频率**持久化到 AstrBot 服务端**（跨设备生效），
+     localStorage 仅作为非沙箱环境的兜底。 */
+  var LS_LAYOUT = "srvmon-layout-v3", LS_GINT = "srvmon-ginterval",
+      LS_SAVED = "srvmon-saved-layouts-v1";
+  function persistState() {
+    try { localStorage.setItem(LS_LAYOUT, JSON.stringify({ auto: S.auto, items: S.layout, gint: S.interval })); } catch (e) {}
+    if (S.bridge && !S.demo) {
+      S.bridge.apiPost("ui/save", { auto: S.auto, items: S.layout,
+        gint: S.interval, tas: S.termAuto !== false })
+        .catch(function () {});
+    }
+  }
+  function saveLayout() { persistState(); }
+  function loadLayout() {
+    try {
+      var raw = JSON.parse(localStorage.getItem(LS_LAYOUT) || "null");
+      if (raw && Array.isArray(raw.items)) {
+        S.auto = !!raw.auto;
+        S.layout = raw.items.filter(function (p) { return p && TYPES[p.type] && p.id; }).map(function (p) {
+          return { id: String(p.id), type: p.type, source: p.source || "local",
+                   span: Math.min(4, Math.max(1, p.span | 0 || 2)), interval: p.interval | 0 };
+        });
+        if (raw.gint >= 1 && raw.gint <= 3600) S.interval = parseInt(raw.gint, 10);
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+  function L(type, source, span) {
+    return { id: uid(), type: type, source: source || "", span: span, interval: 0 };
+  }
+  function defaultLayoutItems(names) {
+    var first = names[0] || "local";
+    var items = [];
+    names.forEach(function (n) { items.push(L("server", n, 2)); });
+    items.push(L("charts", first, 2));
+    items.push(L("procs", first, 2));
+    items.push(L("docker", first, 2));
+    items.push(L("info", first, 1));
+    items.push(L("llm", "", 2));
+    items.push(L("balance", "", 1));
+    items.push(L("ports", "", 2));
+    items.push(L("http", "", 2));
+    items.push(L("alerts", "", 2));
+    items.push(L("term", first, 4));
+    return items;
+  }
+  var PRESETS = {
+    default: { name: "默认布局", icon: "grid",
+      build: function (names) { return defaultLayoutItems(names); } },
+    ops: { name: "运维优先", icon: "wifi",
+      build: function (names) {
+        var first = names[0] || "local";
+        var items = names.slice(0, 2).map(function (n) { return L("server", n, 2); });
+        items.push(L("ports", "", 2));
+        items.push(L("http", "", 2));
+        items.push(L("docker", first, 2));
+        items.push(L("alerts", "", 2));
+        items.push(L("procs", first, 2));
+        items.push(L("info", first, 1));
+        items.push(L("balance", "", 1));
+        return items;
+      } },
+    llm: { name: "模型观测", icon: "bot",
+      build: function (names) {
+        var first = names[0] || "local";
+        var items = [L("llm", "", 4)];
+        items.push(L("balance", "", 1));
+        items.push(L("info", first, 1));
+        items.push(L("alerts", "", 2));
+        names.forEach(function (n) { items.push(L("server", n, 2)); });
+        items.push(L("charts", first, 2));
+        return items;
+      } },
+    compact: { name: "紧凑总览", icon: "list",
+      build: function (names) {
+        var first = names[0] || "local";
+        var items = names.slice(0, 4).map(function (n) { return L("server", n, 2); });
+        items.push(L("llm", "", 2));
+        items.push(L("alerts", "", 2));
+        items.push(L("ports", "", 2));
+        items.push(L("http", "", 2));
+        items.push(L("docker", first, 2));
+        items.push(L("procs", first, 2));
+        items.push(L("info", first, 1));
+        items.push(L("balance", "", 1));
+        return items;
+      } },
+    wall: { name: "大屏监控", icon: "monitor",
+      build: function (names) {
+        var first = names[0] || "local";
+        var items = [L("charts", first, 4)];
+        names.forEach(function (n) { items.push(L("server", n, 2)); });
+        items.push(L("llm", "", 2));
+        items.push(L("alerts", "", 2));
+        items.push(L("docker", first, 2));
+        items.push(L("info", first, 2));
+        return items;
+      } }
+  };
+  function defaultLayout() { return PRESETS.default.build(serverNames()); }
+
+  function loadSavedLayouts() {
+    if (Array.isArray(S.savedLayouts)) return S.savedLayouts;
+    try {
+      var raw = JSON.parse(localStorage.getItem(LS_SAVED) || "null");
+      S.savedLayouts = Array.isArray(raw) ? raw : [];
+    } catch (e) { S.savedLayouts = []; }
+    return S.savedLayouts;
+  }
+  function persistSavedLayouts(list) {
+    S.savedLayouts = list;
+    try { localStorage.setItem(LS_SAVED, JSON.stringify(list)); } catch (e) {}
+    if (S.bridge && !S.demo) {
+      S.bridge.apiPost("ui/save", { saved: list }).catch(function () {});
+    }
+  }
+
+  /* ================= 面板 DOM 构建 ================= */
+  var C = 2 * Math.PI * 52;
+  function bodyTemplate(type) {
+    switch (type) {
+      case "server":
+        return '<div class="card-top"><span class="led"></span><b class="nm"></b>' +
+          '<span class="chip"></span><span class="up"></span></div>' +
+          '<div class="sub"></div>' +
+          '<div class="errbox" style="display:none">' + icon("warn") + '<span></span></div>' +
+          '<div class="rings">' + ringSvg("cpu") + ringSvg("mem") + ringSvg("disk") + "</div>" +
+          '<div class="stats"></div><div class="disks"></div>' +
+          '<div class="sparkbox"><div class="legend">' +
+          '<span><i style="background:var(--accent)"></i>CPU %</span>' +
+          '<span><i style="background:var(--violet)"></i>内存 %</span></div>' +
+          '<canvas class="spark"></canvas></div>' +
+          '<div class="fresh"><span class="stale-dot"></span><span class="ftext">等待数据…</span></div>';
+      case "charts":
+        return '<div class="legend" style="margin-bottom:6px">' +
+          '<span><i style="background:var(--accent)"></i>CPU</span>' +
+          '<span><i style="background:var(--violet)"></i>内存</span>' +
+          '<span><i style="background:var(--warn)"></i>Swap</span>' +
+          '<span><i style="background:var(--ok)"></i>下行</span>' +
+          '<span><i style="background:var(--err)"></i>上行</span></div>' +
+          '<canvas class="chart c-pct"></canvas>' +
+          '<div style="height:10px"></div>' +
+          '<canvas class="chart c-net"></canvas>';
+      case "info":
+        return '<div class="kv"></div>';
+      case "term":
+        return '<div class="term-wrap">' +
+          '<div class="term-bar"><span class="selwrap"><select class="term-target"></select></span>' +
+          '<span class="hint">网页 SSH · 实时会话</span>' +
+          '<label class="conn term-auto-l"><input type="checkbox" class="term-auto" checked> 自动滚动</label><span class="spacer"></span>' +
+          '<button class="pbtn term-clear" title="重连当前会话">' + icon("refresh") + "</button></div>" +
+          '<div class="ttabs"></div>' +
+          '<div class="term-out"></div>' +
+          "</div>";
+      case "llm":
+        return '<div class="big4"></div>' +
+          '<div class="legend" style="margin:8px 0 3px">每分钟调用（近 1 小时）</div>' +
+          '<canvas class="llmchart"></canvas>' +
+          '<div class="llm-sub muted" style="font-size:11px;margin-top:6px"></div>' +
+          '<div class="rows llm-models" style="margin-top:6px"></div>';
+      case "balance":
+        return '<div class="rows"></div>';
+      case "procs": case "docker": case "ports": case "http": case "alerts":
+        return '<div class="rows"></div>';
+    }
+    return "";
+  }
+  var ringSeq = 0;
+  function ringSvg(k) {
+    var iid = "rg" + (++ringSeq);
+    return '<div class="ring">' +
+      '<svg class="gauge" viewBox="0 0 120 120">' +
+      '<defs><linearGradient id="' + iid + '" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0" stop-color="#9aa0b4"/><stop offset="1" stop-color="#6b7280"/>' +
+      "</linearGradient></defs>" +
+      '<circle class="rt" cx="60" cy="60" r="52"/>' +
+      '<circle class="rv" data-k="' + k + '" cx="60" cy="60" r="52" stroke="url(#' + iid + ')"/>' +
+      "</svg>" +
+      '<div class="rlab"><b data-ringv="' + k + '">--</b><span>' +
+      icon(k === "cpu" ? "cpu" : k === "mem" ? "ram" : "hdd") +
+      { cpu: "CPU", mem: "内存", disk: "磁盘" }[k] + "</span></div></div>";
+  }
+
+  function buildPanels() {
+    // 清理已被移除面板的终端会话
+    if (S.layout) {
+      var alive = {};
+      S.layout.forEach(function (x) { alive[x.id] = 1; });
+      Object.keys(S.el).forEach(function (id) {
+        if (!alive[id] && S.el[id] && S.el[id].ttabs) {
+          S.el[id].ttabs.forEach(function (t) {
+            if (t.sid) postJSON("terminal/close", { sid: t.sid }).catch(function () {});
+          });
+        }
+      });
+    }
+    if (S.auto) {
+      var def = defaultLayout();
+      var dkey = def.map(function (p) { return p.type + ":" + p.source; }).join("|");
+      if (S.layout.length !== def.length || dkey !== S._autoKey) {
+        S._autoKey = dkey;
+        S.layout = def;
+      }
+    }
+    var key = S.layout.map(function (p) { return p.id + ":" + p.type + ":" + p.source + ":" + p.span; }).join("|");
+    if (key === S.builtKey) return;
+    S.builtKey = key;
+
+    var board = $("board");
+    board.innerHTML = "";
+    S.el = {};
+    if (!S.layout.length) {
+      board.innerHTML = '<div class="glass" style="grid-column:1/-1;text-align:center;padding:40px;color:var(--ink-muted)">暂无面板，点击右上角「添加面板」搭建你的运维看板。</div>';
+      return;
+    }
+    S.layout.forEach(function (p, i) {
+      var t = TYPES[p.type];
+      var root = document.createElement("article");
+      root.className = "panel glass";
+      root.dataset.span = p.span;
+      root.dataset.type = p.type;
+      root.dataset.id = p.id;
+      root.style.setProperty("--d", (i * 55) + "ms");
+      root.innerHTML =
+        '<header class="p-head">' +
+        '<span class="grip" draggable="true" title="拖拽调整顺序">' + icon("grip") + "</span>" +
+        '<span class="p-title">' + icon(t.icon) + t.name + "</span>" +
+        '<span class="p-badge"></span><span class="spacer"></span>' +
+        '<button class="pbtn p-gear" title="面板设置">' + icon("gear") + "</button>" +
+        "</header>" +
+        '<div class="p-editor"></div>' +
+        '<div class="p-body">' + bodyTemplate(p.type) + "</div>" +
+        '<span class="rz" title="拖拽调整宽度">' + icon("grip") + "</span>";
+      board.appendChild(root);
+
+      var el = { root: root, body: root.querySelector(".p-body"), badge: root.querySelector(".p-badge"), editor: root.querySelector(".p-editor") };
+      if (p.type === "server") rebindServer(el);
+      else if (p.type === "charts") { el.cPct = root.querySelector(".c-pct"); el.cNet = root.querySelector(".c-net"); }
+      else if (p.type === "info") el.kv = root.querySelector(".kv");
+      else if (p.type === "llm") {
+        el.b4 = root.querySelector(".big4");
+        el.lchart = root.querySelector(".llmchart");
+        el.lmodels = root.querySelector(".llm-models");
+        el.lsub = root.querySelector(".llm-sub");
+      }
+      else if (p.type === "term") bindTerm(p, el);
+      else el.rows = root.querySelector(".rows");
+      S.el[p.id] = el;
+      if (p.h) {
+        el.body.style.height = p.h + "px";
+        el.body.classList.add("hfixed");
+      }
+      bindPanelEvents(p, el);
+      buildEditor(p, el);
+      updateBadge(p, el);
+    });
+  }
+  function rebindServer(el) {
+    var b = el.body;
+    el.led = b.querySelector(".card-top .led");
+    el.nm = b.querySelector(".nm");
+    el.chip = b.querySelector(".chip");
+    el.up = b.querySelector(".up");
+    el.sub = b.querySelector(".sub");
+    el.errbox = b.querySelector(".errbox");
+    el.errtxt = el.errbox.querySelector("span");
+    el.stats = b.querySelector(".stats");
+    el.disks = b.querySelector(".disks");
+    el.spark = b.querySelector("canvas.spark");
+    el.fresh = b.querySelector(".fresh");
+    el.ftext = b.querySelector(".ftext");
+    el.rings = {};
+    ["cpu", "mem", "disk"].forEach(function (k) {
+      var rv = b.querySelector('.rv[data-k="' + k + '"]');
+      rv.style.strokeDasharray = C; rv.style.strokeDashoffset = C;
+      var g = b.querySelector(".ring defs linearGradient");
+      el.rings[k] = { val: rv, s0: g.querySelectorAll("stop")[0], s1: g.querySelectorAll("stop")[1],
+                      txt: b.querySelector('[data-ringv="' + k + '"]') };
+    });
+  }
+  function updateBadge(p, el) {
+    var bits = [];
+    if (TYPES[p.type].per) bits.push(dispName(p.source));
+    if (p.interval > 0) bits.push(p.interval + "s");
+    el.badge.textContent = bits.join(" · ");
+  }
+
+  /* ================= 面板编辑 / 拖拽排序 ================= */
+  function buildEditor(p, el) {
+    var t = TYPES[p.type];
+    var html = "";
+    if (t.per) {
+      html += '<label>数据源<span class="selwrap"><select class="e-src">' +
+        serverNames().map(function (n) {
+          return '<option value="' + esc(n) + '"' + (n === p.source ? " selected" : "") + ">" + esc(dispName(n)) + "</option>";
+        }).join("") + "</select></span></label>";
+    }
+    html += '<label>宽度<span class="selwrap"><select class="e-span">' +
+      SPANS.map(function (s) { return '<option value="' + s[0] + '"' + (p.span === s[0] ? " selected" : "") + ">" + s[1] + "</option>"; }).join("") +
+      "</select></span></label>";
+    html += '<label>刷新<span class="selwrap"><select class="e-int">' +
+      INTERVALS.map(function (s) { return '<option value="' + s[0] + '"' + (p.interval === s[0] ? " selected" : "") + ">" + s[1] + "</option>"; }).join("") +
+      "</select></span></label>";
+    html += '<button class="pbtn danger e-del" title="删除面板">' + icon("trash") + "删除</button>";
+    el.editor.innerHTML = html;
+
+    var src = el.editor.querySelector(".e-src");
+    if (src) src.addEventListener("change", function () {
+      p.source = this.value;
+      el.body.dataset.src = p.source;
+      markCustom(); updateBadge(p, el); renderPanel(p);
+    });
+    el.editor.querySelector(".e-span").addEventListener("change", function () {
+      p.span = parseInt(this.value, 10) || 2;
+      el.root.dataset.span = p.span;
+      markCustom(); updateBadge(p, el);
+      setTimeout(function () { renderPanel(p); }, 80);  // 宽度变化后重算 canvas
+    });
+    el.editor.querySelector(".e-int").addEventListener("change", function () {
+      p.interval = parseInt(this.value, 10) || 0; markCustom(); updateBadge(p, el);
+    });
+    el.editor.querySelector(".e-del").addEventListener("click", function () {
+      S.layout = S.layout.filter(function (x) { return x.id !== p.id; });
+      markCustom(); S.builtKey = ""; buildPanels();
+    });
+    el.root.querySelector(".p-gear").addEventListener("click", function () {
+      el.editor.classList.toggle("open");
+    });
+  }
+  function markCustom() { S.auto = false; saveLayout(); }
+
+  /* ---------- 桌面式拖拽：卡片跟手浮动，其余卡片实时让位 ---------- */
+  function bindResize(p, el) {
+    var rz = el.root.querySelector(".rz");
+    rz.addEventListener("pointerdown", function (e) {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      e.preventDefault();
+      var boardRect = $("board").getBoundingClientRect();
+      var gap = 14;
+      var colw = (boardRect.width - 3 * gap) / 4;
+      var startX = e.clientX, startY = e.clientY, startSpan = p.span;
+      var startH = el.body.getBoundingClientRect().height || 260;
+      document.body.classList.add("rz-dragging");
+      function onMove(ev) {
+        var span = Math.max(1, Math.min(4, Math.round(startSpan + (ev.clientX - startX) / (colw + gap))));
+        if (span !== p.span) {
+          p.span = span;
+          el.root.dataset.span = span;
+        }
+        var h = Math.max(150, Math.min(2000, Math.round(startH + (ev.clientY - startY))));
+        if (Math.abs(ev.clientY - startY) > 12) {
+          p.h = h;
+          el.body.style.height = h + "px";
+          el.body.classList.add("hfixed");
+        }
+      }
+      function onUp() {
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        document.body.classList.remove("rz-dragging");
+        markCustom(); saveLayout();
+        setTimeout(function () { renderPanel(p); }, 80);
+      }
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    });
+  }
+  function bindPanelEvents(p, el) {
+    bindResize(p, el);
+    var grip = el.root.querySelector(".grip");
+    grip.addEventListener("pointerdown", function (e) {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      e.preventDefault();
+      startLiveDrag(p, el, e);
+    });
+  }
+  function startLiveDrag(p, el, e) {
+    if (S._drag) return;
+    var root = el.root;
+    var rect = root.getBoundingClientRect();
+    var clone = root.cloneNode(true);
+    clone.classList.add("drag-clone");
+    clone.classList.remove("drag-ghost");
+    clone.style.width = rect.width + "px";
+    clone.style.left = rect.left + "px";
+    clone.style.top = rect.top + "px";
+    // cloneNode 不复制 canvas 位图，手动拷贝
+    var oc = root.querySelectorAll("canvas"), cc = clone.querySelectorAll("canvas");
+    for (var i = 0; i < oc.length && i < cc.length; i++) {
+      cc[i].width = oc[i].width; cc[i].height = oc[i].height;
+      try { cc[i].getContext("2d").drawImage(oc[i], 0, 0); } catch (err) {}
+    }
+    document.body.appendChild(clone);
+    root.classList.add("drag-ghost");
+    document.body.classList.add("dragging");
+    S._drag = { id: p.id, clone: clone, offX: e.clientX - rect.left, offY: e.clientY - rect.top };
+    dragMove(e);
+    document.addEventListener("pointermove", dragMove);
+    document.addEventListener("pointerup", dragEnd);
+    document.addEventListener("pointercancel", dragEnd);
+  }
+  function dragMove(e) {
+    var d = S._drag; if (!d) return;
+    e.preventDefault();
+    d.clone.style.left = Math.round(e.clientX - d.offX) + "px";
+    d.clone.style.top = Math.round(e.clientY - d.offY) + "px";
+    // 接近视口边缘时自动滚动
+    if (e.clientY < 70) window.scrollBy(0, -10);
+    else if (e.clientY > window.innerHeight - 70) window.scrollBy(0, 10);
+    // 命中测试：克隆体 pointer-events:none，elementFromPoint 返回其下方面板
+    var under = document.elementFromPoint(e.clientX, e.clientY);
+    var panel = under && under.closest ? under.closest(".panel") : null;
+    if (!panel || panel.classList.contains("drag-ghost") || panel.dataset.id === d.id) return;
+    var r = panel.getBoundingClientRect();
+    var mx = r.left + r.width / 2, my = r.top + r.height / 2;
+    var before = (e.clientY < my) || (Math.abs(e.clientY - my) < r.height * 0.25 && e.clientX < mx);
+    movePanel(d.id, panel.dataset.id, before);
+  }
+  function dragEnd() {
+    var d = S._drag; if (!d) return;
+    document.removeEventListener("pointermove", dragMove);
+    document.removeEventListener("pointerup", dragEnd);
+    document.removeEventListener("pointercancel", dragEnd);
+    try { d.clone.remove(); } catch (err) {}
+    var ghost = $("board").querySelector(".drag-ghost");
+    if (ghost) ghost.classList.remove("drag-ghost");
+    document.body.classList.remove("dragging");
+    S._drag = null;
+    S.auto = false; // 拖拽即自定义布局，避免启动时被自动布局覆盖
+    saveLayout();
+  }
+  function movePanel(dragId, targetId, before) {
+    var from = -1, to = -1;
+    S.layout.forEach(function (x, i) { if (x.id === dragId) from = i; if (x.id === targetId) to = i; });
+    if (from < 0 || to < 0 || from === to) return;
+    var item = S.layout.splice(from, 1)[0];
+    S.layout.forEach(function (x, i) { if (x.id === targetId) to = i; });
+    S.layout.splice(before ? to : to + 1, 0, item);
+    var board = $("board");
+    var dragEl = board.querySelector('[data-id="' + dragId + '"]');
+    var targetEl = board.querySelector('[data-id="' + targetId + '"]');
+    if (dragEl && targetEl) board.insertBefore(dragEl, before ? targetEl : targetEl.nextSibling);
+  }
+
+  /* ================= 渲染：各类型面板 ================= */
+  function setRing(r, base, pct) {
+    var has = pct != null && !isNaN(Number(pct));
+    var pv = has ? Math.max(0, Math.min(100, Number(pct))) : 0;
+    var pair = pairFor(base, has ? pv : null);
+    r.val.style.strokeDashoffset = C * (1 - pv / 100);
+    r.s0.setAttribute("stop-color", pair[0]);
+    r.s1.setAttribute("stop-color", pair[1]);
+    r.txt.textContent = has ? pv.toFixed(1) + "%" : "--";
+  }
+  function row(ic, k, v, wide) {
+    return "<div" + (wide ? ' class="wide"' : "") + '><span class="k">' + icon(ic) + k + "</span> " + v + "</div>";
+  }
+  function diskBar(d) {
+    var p = Math.max(0, Math.min(100, Number(d.percent) || 0));
+    var color = p >= 85 ? "var(--err)" : p >= 60 ? "var(--warn)" : "var(--accent)";
+    return '<div class="dbar"><span class="mount">' + esc(d.mount) + "</span>" +
+      '<span class="trk"><span class="fil" style="width:' + p.toFixed(1) + "%;background:" + color + '"></span></span>' +
+      '<span class="m">' + p.toFixed(1) + "% · " + fmtBytes(d.used) + " / " + fmtBytes(d.total) + "</span></div>";
+  }
+  function staleness(srv, snap) {
+    if (!S.data) return { stale: false, age: 0 };
+    var age = Math.max(0, (Number(S.data.now) || Date.now() / 1000) - (Number(snap.ts) || 0));
+    var limit = (srv.mode === "local" || srv.name === "local")
+      ? (S.data.local_interval || 5) * 2.5 + 5
+      : (S.data.remote_interval || 60) * 2.5 + 30;
+    return { stale: age > limit, age: age };
+  }
+  function histOf(srv) { return (srv && srv.history) ? srv.history : null; }
+  function emptyLine(text) { return '<div class="empty-line">' + esc(text) + "</div>"; }
+
+  function renderServer(p, el) {
+    var srv = srvOf(p.source);
+    if (!srv) { el.body.innerHTML = emptyLine("数据源不存在，请在面板设置中选择服务器"); return; }
+    var snap = srv.snapshot || {};
+    var online = !!snap.online;
+    if (el.body.dataset.src !== p.source) {  // 数据源变更：重建骨架
+      el.body.innerHTML = bodyTemplate("server");
+      el.body.dataset.src = p.source;
+      rebindServer(el);
+    }
+    var modeIcon = { local: "monitor", ssh: "cloud", agent: "wifi" };
+    el.led.className = "led" + (online ? " ok" : "");
+    el.nm.innerHTML = icon(modeIcon[srv.mode] || "server") + esc(srv.display_name || srv.name);
+    el.chip.innerHTML = icon(modeIcon[srv.mode] || "server") +
+      ({ local: "本机", ssh: "SSH", agent: "Agent" }[srv.mode] || srv.mode);
+    el.up.innerHTML = icon("clock") + (online ? fmtUptime(snap.uptime) : "离线");
+    el.sub.textContent = (snap.hostname ? snap.hostname + " · " : "") +
+      (snap.os || srv.host || "") + (snap.cpu_cores ? " · " + snap.cpu_cores + " 核" : "");
+    el.errbox.style.display = online ? "none" : "flex";
+    if (!online) {
+      el.errtxt.innerHTML = esc(snap.error || "未知原因") + (snap.ts ? "<br>最后采集: " + fmtTime(snap.ts) : "");
+    }
+    var mem = snap.mem || {}, net = snap.net || {}, disks = snap.disks || [];
+    var diskMax = disks.length ? Math.max.apply(null, disks.map(function (d) { return Number(d.percent) || 0; })) : null;
+    setRing(el.rings.cpu, "cpu", online ? snap.cpu_percent : null);
+    setRing(el.rings.mem, "mem", online ? mem.percent : null);
+    setRing(el.rings.disk, "disk", online ? diskMax : null);
+
+    var rows = "";
+    if (online) {
+      if (snap.load) rows += row("gauge", "负载", snap.load.map(function (x) { return Number(x).toFixed(2); }).join(" / "));
+      if (mem.swap_total) rows += row("swap", "Swap", (mem.swap_percent || 0).toFixed(1) + "%");
+      if (snap.temp != null) rows += row("thermo", "温度", snap.temp + " °C");
+      rows += row("activity", "网络", icon("down") + " " + fmtRate(net.rx_rate) + "&ensp;" + icon("up") + " " + fmtRate(net.tx_rate), true);
+      if (snap.proc) rows += row("cpu", "AstrBot", "CPU " + (snap.proc.cpu || 0).toFixed(1) + "% · " + fmtBytes(snap.proc.rss), true);
+    }
+    el.stats.innerHTML = rows;
+    el.stats.style.display = online ? "grid" : "none";
+    var diskHtml = "";
+    if (online && disks.length) {
+      var show = disks.length <= 3 ? disks
+        : disks.slice().sort(function (a, b) { return (b.percent || 0) - (a.percent || 0); }).slice(0, 2);
+      diskHtml = show.map(diskBar).join("");
+      if (disks.length > 3) diskHtml += '<div class="dbar"><span class="m" style="margin-left:auto">共 ' + disks.length + " 个分区</span></div>";
+    }
+    el.disks.innerHTML = diskHtml;
+    var st = staleness(srv, snap);
+    el.fresh.className = "fresh" + (st.stale ? " stale" : "");
+    el.ftext.textContent = "更新于 " + fmtTime(snap.ts) + (st.stale ? " · 数据滞后 " + Math.round(st.age) + "s" : "");
+    drawSpark(el.spark, histOf(srv));
+  }
+
+  /* ---------- Canvas ---------- */
+  function prepCanvas(canvas) {
+    var dpr = window.devicePixelRatio || 1;
+    var rect = canvas.getBoundingClientRect();
+    var w = Math.max(60, rect.width), h = Math.max(30, rect.height);
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+    }
+    var g = canvas.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    return { g: g, w: w, h: h };
+  }
+  function emptyCv(g, w, h, text) {
+    g.fillStyle = cssVar("--ink-muted") || "#888"; g.font = "12px sans-serif";
+    g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText(text, w / 2, h / 2);
+  }
+  function renderLines(canvas, series, opts) {
+    var p = prepCanvas(canvas), g = p.g, w = p.w, h = p.h;
+    var padL = opts.yLabels ? 40 : 6, padR = 10, padT = 8, padB = 16;
+    var iw = w - padL - padR, ih = h - padT - padB;
+    var n = Math.max.apply(null, series.map(function (s) { return s.data.length; }));
+    g.font = "10px sans-serif";
+    var yMax = opts.yMax, yMin = opts.yMin || 0;
+    for (var i = 0; i <= 4; i++) {
+      var y = padT + ih - ih * i / 4;
+      g.strokeStyle = cssVar("--grid") || "rgba(128,128,128,.2)"; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(padL, y); g.lineTo(w - padR, y); g.stroke();
+      if (opts.yLabels) {
+        g.fillStyle = cssVar("--ink-muted") || "#888"; g.textAlign = "right"; g.textBaseline = "middle";
+        g.fillText(opts.fmtVal ? opts.fmtVal(yMin + (yMax - yMin) * i / 4)
+                               : String(Math.round(yMin + (yMax - yMin) * i / 4)), padL - 5, y);
+      }
+    }
+    if (!n || n < 2) { emptyCv(g, w, h, opts.empty || "采集中…"); return; }
+    series.forEach(function (s) {
+      var d = s.data; if (!d || d.length < 2) return;
+      var pts = d.map(function (v, i) {
+        var x = padL + iw * i / (n - 1);
+        var yv = padT + ih - ih * ((Number(v) || 0) - yMin) / (yMax - yMin);
+        return [x, Math.max(padT, Math.min(padT + ih, yv))];
+      });
+      if (s.fill) {
+        var grad = g.createLinearGradient(0, padT, 0, padT + ih);
+        grad.addColorStop(0, s.color + "4d"); grad.addColorStop(1, s.color + "03");
+        g.fillStyle = grad;
+        g.beginPath(); g.moveTo(pts[0][0], padT + ih);
+        pts.forEach(function (pt) { g.lineTo(pt[0], pt[1]); });
+        g.lineTo(pts[pts.length - 1][0], padT + ih); g.closePath(); g.fill();
+      }
+      g.save();
+      g.strokeStyle = s.color; g.lineWidth = 1.8; g.lineJoin = "round"; g.lineCap = "round";
+      g.shadowColor = s.color; g.shadowBlur = 6;
+      g.beginPath();
+      pts.forEach(function (pt, i) { i ? g.lineTo(pt[0], pt[1]) : g.moveTo(pt[0], pt[1]); });
+      g.stroke();
+      g.restore();
+      var last = pts[pts.length - 1];
+      g.fillStyle = s.color;
+      g.beginPath(); g.arc(last[0], last[1], 2.6, 0, Math.PI * 2); g.fill();
+    });
+    g.fillStyle = cssVar("--ink-muted") || "#888"; g.textBaseline = "top";
+    g.textAlign = "left"; g.fillText(opts.t0 || "", padL, h - padB + 5);
+    g.textAlign = "right"; g.fillText(opts.t1 || "", w - padR, h - padB + 5);
+  }
+  function drawSpark(canvas, hist) {
+    if (!canvas) return;
+    if (!hist || !hist.ts || hist.ts.length < 2) {
+      var q = prepCanvas(canvas); emptyCv(q.g, q.w, q.h, "采集中…"); return;
+    }
+    renderLines(canvas, [
+      { data: hist.cpu, color: cssVar("--accent"), fill: true },
+      { data: hist.mem, color: cssVar("--violet"), fill: false }
+    ], { yMin: 0, yMax: 100, t0: "", t1: fmtTime(hist.ts[hist.ts.length - 1]) });
+  }
+
+  function renderCharts(p, el) {
+    var srv = srvOf(p.source);
+    if (!srv) { el.body.innerHTML = emptyLine("数据源不存在，请在面板设置中选择服务器"); return; }
+    var hist = histOf(srv);
+    if (!hist) {
+      var a = prepCanvas(el.cPct); emptyCv(a.g, a.w, a.h, "暂无历史数据（离线或尚未采集）");
+      var b = prepCanvas(el.cNet); emptyCv(b.g, b.w, b.h, "暂无历史数据");
+      return;
+    }
+    renderLines(el.cPct, [
+      { data: hist.cpu, color: cssVar("--accent"), fill: true },
+      { data: hist.mem, color: cssVar("--violet"), fill: false },
+      { data: hist.swap, color: cssVar("--warn"), fill: false }
+    ], { yMin: 0, yMax: 100, yLabels: true, t0: fmtTime(hist.ts[0]), t1: fmtTime(hist.ts[hist.ts.length - 1]) });
+    var mx = 1;
+    [hist.net_rx, hist.net_tx].forEach(function (arr) { arr.forEach(function (v) { if (Number(v) > mx) mx = Number(v); }); });
+    var unit = 1, unitName = "B/s";
+    var units = [[1073741824, "GB/s"], [1048576, "MB/s"], [1024, "KB/s"], [1, "B/s"]];
+    for (var ui = 0; ui < units.length; ui++) {
+      if (mx / units[ui][0] >= 0.8 || ui === units.length - 1) { unit = units[ui][0]; unitName = units[ui][1]; break; }
+    }
+    var niceMax = Math.ceil(mx / unit * 1.15 * 10) / 10;
+    var div = function (arr) { return arr.map(function (v) { return (Number(v) || 0) / unit; }); };
+    renderLines(el.cNet, [
+      { data: div(hist.net_rx), color: cssVar("--ok"), fill: true },
+      { data: div(hist.net_tx), color: cssVar("--err"), fill: false }
+    ], { yMin: 0, yMax: niceMax, yLabels: true, fmtVal: function (v) { return Number(v).toFixed(1); },
+         t0: fmtTime(hist.ts[0]), t1: fmtTime(hist.ts[hist.ts.length - 1]) + "  ·  " + unitName });
+  }
+
+  function renderInfo(p, el) {
+    var srv = srvOf(p.source);
+    if (!srv) { el.body.innerHTML = emptyLine("数据源不存在，请在面板设置中选择服务器"); return; }
+    var snap = srv.snapshot || {};
+    if (!snap.online) { el.kv.innerHTML = ""; el.body.innerHTML = emptyLine("离线：" + (snap.error || "未知")); return; }
+    var proc = snap.proc;
+    el.kv.innerHTML =
+      '<span class="k">' + icon("monitor") + "主机</span><span>" + esc(snap.hostname || "-") + "</span>" +
+      '<span class="k">' + icon("server") + "系统</span><span>" + esc(snap.os || "-") + (snap.arch ? " · " + esc(snap.arch) : "") + "</span>" +
+      '<span class="k">' + icon("cpu") + "CPU</span><span>" + (snap.cpu_percent || 0).toFixed(1) + "% · " + (snap.cpu_cores || "?") + " 核</span>" +
+      '<span class="k">' + icon("ram") + "内存</span><span>" + fmtBytes((snap.mem || {}).used) + " / " + fmtBytes((snap.mem || {}).total) + "</span>" +
+      '<span class="k">' + icon("clock") + "运行</span><span>" + fmtUptime(snap.uptime) + "</span>" +
+      '<span class="k">' + icon("gauge") + "负载</span><span>" + (snap.load ? snap.load.map(function (x) { return Number(x).toFixed(2); }).join(" / ") : "-") + "</span>" +
+      (snap.temp != null ? '<span class="k">' + icon("thermo") + "温度</span><span>" + snap.temp + " °C</span>" : "") +
+      (proc ? '<span class="k">' + icon("activity") + "AstrBot</span><span>CPU " + (proc.cpu || 0).toFixed(1) + "% · " + fmtBytes(proc.rss) + "</span>" : "");
+  }
+
+  function renderProcs(p, el) {
+    var srv = srvOf(p.source);
+    if (!srv) { el.body.innerHTML = emptyLine("数据源不存在，请在面板设置中选择服务器"); return; }
+    var snap = srv.snapshot || {};
+    if (!snap.online) { el.rows.innerHTML = emptyLine("离线"); return; }
+    var list = snap.top_procs || [];
+    if (!list.length) { el.rows.innerHTML = emptyLine("暂无进程数据（可在插件配置开启采集）"); return; }
+    el.rows.innerHTML = list.map(function (pr) {
+      return '<div class="rline">' +
+        '<span class="grow" title="' + esc(pr.name) + '">' + esc(pr.name) + ' <span class="sub2">#' + pr.pid + "</span></span>" +
+        '<span class="val">CPU ' + (pr.cpu || 0).toFixed(1) + "%</span>" +
+        '<span class="val">MEM ' + (pr.mem || 0).toFixed(1) + "%</span></div>";
+    }).join("");
+  }
+
+  function renderDocker(p, el) {
+    var srv = srvOf(p.source);
+    if (!srv) { el.body.innerHTML = emptyLine("数据源不存在，请在面板设置中选择服务器"); return; }
+    var snap = srv.snapshot || {};
+    if (!snap.online) { el.rows.innerHTML = emptyLine("离线"); return; }
+    var list = snap.docker;
+    var derr = snap.docker_error;
+    if (list == null && !derr) { el.rows.innerHTML = emptyLine("未采集 Docker 信息（可在插件配置开启）"); return; }
+    if (derr) {
+      el.rows.innerHTML = '<div class="rline"><span class="sdot" style="background:var(--warn)"></span>' +
+        '<span class="grow">Docker 采集失败</span></div>' +
+        '<div class="rline"><span class="val sub2" style="white-space:normal;word-break:break-all">' + esc(derr) + '</span></div>';
+      return;
+    }
+    if (!list.length) { el.rows.innerHTML = emptyLine("没有容器"); return; }
+    el.rows.innerHTML = list.map(function (c) {
+      var color = c.state === "running" ? "var(--ok)" : c.state === "paused" ? "var(--warn)" : "var(--ink-muted)";
+      return '<div class="rline"><span class="sdot" style="background:' + color + '"></span>' +
+        '<span class="grow" title="' + esc(c.name) + '">' + esc(c.name) + "</span>" +
+        '<span class="val sub2">' + esc(c.status || c.state) + "</span></div>";
+    }).join("");
+  }
+
+  function renderPorts(p, el) {
+    var tcp = (S.data && S.data.probes && S.data.probes.tcp) || [];
+    if (!tcp.length) { el.rows.innerHTML = emptyLine("尚未配置探活目标，请在插件配置中添加「TCP 端口探活列表」"); return; }
+    el.rows.innerHTML = tcp.map(function (t) {
+      var color = t.ok ? "var(--ok)" : "var(--err)";
+      return '<div class="rline"><span class="sdot" style="background:' + color + '"></span>' +
+        '<span class="grow" title="' + esc(t.host + ":" + t.port) + '">' + esc(t.name) + ' <span class="sub2">' + esc(t.host + ":" + t.port) + "</span></span>" +
+        '<span class="val">' + (t.ok ? (t.latency_ms != null ? t.latency_ms.toFixed(0) + " ms" : "通") : "不通") + "</span></div>";
+    }).join("");
+  }
+  function renderHttp(p, el) {
+    var http = (S.data && S.data.probes && S.data.probes.http) || [];
+    if (!http.length) { el.rows.innerHTML = emptyLine("尚未配置探活目标，请在插件配置中添加「HTTP 服务探活列表」"); return; }
+    el.rows.innerHTML = http.map(function (t) {
+      var color = t.ok ? "var(--ok)" : "var(--err)";
+      return '<div class="rline"><span class="sdot" style="background:' + color + '"></span>' +
+        '<span class="grow" title="' + esc(t.url) + '">' + esc(t.name) + ' <span class="sub2">' + esc(t.method + " " + t.url) + "</span></span>" +
+        '<span class="val">' + (t.code != null ? t.code : "-") + "</span>" +
+        '<span class="val">' + (t.latency_ms != null ? t.latency_ms.toFixed(0) + " ms" : "-") + "</span></div>";
+    }).join("");
+  }
+  function renderAlerts(p, el) {
+    var alerts = (S.data && S.data.alerts) || [];
+    if (!alerts.length) { el.rows.innerHTML = emptyLine("暂无告警记录"); return; }
+    el.rows.innerHTML = alerts.slice(0, 12).map(function (a) {
+      var color = a.level === "recovery" ? "var(--ok)" : "var(--err)";
+      return '<div class="rline"><span class="sdot" style="background:' + color + '"></span>' +
+        '<span class="grow" title="' + esc(a.text) + '">' + esc(a.text) + "</span>" +
+        '<span class="val sub2">' + fmtTime(a.ts) + "</span></div>";
+    }).join("");
+  }
+
+  function renderLLM(p, el) {
+    var ex = S.data && S.data.llm;
+    if (!ex) { el.body.innerHTML = emptyLine("统计数据将在模型调用后自动出现（自动挂钩 LLM 请求/响应）"); return; }
+    var t = ex.today || {};
+    var fmtK = function (n) {
+      n = Number(n) || 0;
+      if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+      if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+      return String(n);
+    };
+    el.b4.innerHTML =
+      '<div class="b4"><b>' + (t.calls || 0) + '</b><span>调用 <i style="color:var(--err)">' + (t.err || 0) + " 错</i></span></div>" +
+      '<div class="b4"><b>' + fmtK(t.output) + '</b><span>输出 Tokens</span></div>' +
+      '<div class="b4"><b>' + (t.avg_ms != null ? t.avg_ms : "-") + '</b><span>平均延迟 ms</span></div>' +
+      '<div class="b4"><b style="color:' + (t.cache_hit != null && t.cache_hit >= 50 ? "var(--ok)" : "var(--ink)") + '">' +
+      (t.cache_hit != null ? t.cache_hit + "%" : "-") + "</b><span>缓存命中</span></div>";
+    el.lsub.textContent = "输入 " + fmtK(t.input) + "（缓存 " + fmtK(t.cached) + "） · 近 5 分钟 " +
+      (ex.rpm5 || 0) + " 次" + (ex.inflight ? " · 进行中 " + ex.inflight : "");
+    var models = ex.models || {};
+    var keys = Object.keys(models);
+    el.lmodels.innerHTML = keys.length
+      ? keys.slice(0, 6).map(function (m) {
+          var a = models[m];
+          return '<div class="rline"><span class="grow" title="' + esc(m) + '">' + esc(m) + "</span>" +
+            '<span class="val">' + a.calls + " 次</span>" +
+            '<span class="val">' + fmtK(a.output) + " out</span>" +
+            '<span class="val">' + (a.cache_hit != null ? a.cache_hit + "%" : "-") + "</span>" +
+            '<span class="val sub2">' + (a.avg_ms != null ? a.avg_ms + "ms" : "-") + "</span></div>";
+        }).join("")
+      : emptyLine("今日暂无模型调用");
+    // 每分钟调用曲线
+    var series = ex.minute_calls || [];
+    if (series.length >= 2) {
+      var mx = 1;
+      series.forEach(function (v) { if (Number(v) > mx) mx = Number(v); });
+      var niceMax = Math.max(1, Math.ceil(mx * 1.15));
+      var now = new Date();
+      function tm(off) {
+        var d = new Date(now.getTime() - off * 60000);
+        return (d.getHours() < 10 ? "0" : "") + d.getHours() + ":" + (d.getMinutes() < 10 ? "0" : "") + d.getMinutes();
+      }
+      renderLines(el.lchart, [
+        { data: series, color: cssVar("--accent"), fill: true }
+      ], { yMin: 0, yMax: niceMax, yLabels: true,
+           fmtVal: function (v) { return String(Math.round(v)); },
+           t0: tm(59), t1: tm(0) });
+    } else {
+      var q = prepCanvas(el.lchart); emptyCv(q.g, q.w, q.h, "采集中…");
+    }
+  }
+  function renderBalance(p, el) {
+    var list = (S.data && S.data.balances) || [];
+    if (!list.length) {
+      el.rows.innerHTML = emptyLine("尚未配置余额来源，请在插件配置中添加「模型余额来源列表」");
+      return;
+    }
+    el.rows.innerHTML = list.map(function (b) {
+      if (!b.ok) {
+        return '<div class="rline"><span class="sdot" style="background:var(--err)"></span>' +
+          '<span class="grow">' + esc(b.name) + ' <span class="sub2">' + esc(b.type_name || "") + "</span></span>" +
+          '<span class="val sub2" title="' + esc(b.error || "") + '">' + esc(b.error || "查询失败") + "</span></div>";
+      }
+      var bits = [];
+      if (b.used != null) bits.push("已用 " + b.used);
+      if (b.granted != null && b.granted > 0) bits.push("含赠 " + b.granted);
+      return '<div class="rline"><span class="sdot" style="background:var(--ok)"></span>' +
+        '<span class="grow" title="' + esc(b.name) + '">' + esc(b.name) + ' <span class="sub2">' + esc(b.type_name || "") + "</span></span>" +
+        (bits.length ? '<span class="val sub2">' + esc(bits.join(" · ")) + "</span>" : "") +
+        '<span class="val">' + (b.total != null ? b.total : "-") + " " + esc(b.currency || "") + "</span>" +
+        '<span class="val sub2">' + fmtTime(b.ts) + "</span></div>";
+    }).join("");
+  }
+
+  /* ---------- 终端面板（网页 SSH：xterm.js 多标签会话 + SSE） ---------- */
+  function termTheme() {
+    return S.ctx.isDark === false
+      ? { background: "#f4f6fb", foreground: "#24292f", cursor: "#0f9d8a",
+          cursorAccent: "#f4f6fb", selectionBackground: "rgba(59,111,224,.25)" }
+      : { background: "#0b0e14", foreground: "#d7e3f4", cursor: "#5eead4",
+          cursorAccent: "#0b0e14", selectionBackground: "rgba(90,140,255,.35)" };
+  }
+  async function postJSON(ep, body) {
+    var res = await S.bridge.apiPost(ep, body);
+    if (res && (res.status === false || res.status === "error")) {
+      throw new Error(res.message || "请求失败");
+    }
+    return (res && res.data !== undefined && res.data !== null) ? res.data : res;
+  }
+  function termFit(el, tab) {
+    if (!tab || !tab.term) return { cols: 100, rows: 26 };
+    var rect = tab.box.getBoundingClientRect();
+    if (!el._probe || !el._probe.isConnected) {
+      var probe = document.createElement("span");
+      probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre;";
+      probe.textContent = "0000000000";
+      document.body.appendChild(probe);
+      el._probe = probe;
+    }
+    el._probe.style.font = "13px ui-monospace, Consolas, monospace";
+    var cw = el._probe.getBoundingClientRect().width / 10 || 8.4;
+    var ch = Math.round(13 * 1.35);
+    var cols = Math.max(30, Math.floor((rect.width - 20) / cw));
+    var rows = Math.max(10, Math.floor((rect.height - 14) / ch));
+    try { tab.term.resize(cols, rows); } catch (e) {}
+    return { cols: cols, rows: rows };
+  }
+  function activeTabOf(el) {
+    for (var i = 0; i < el.ttabs.length; i++)
+      if (el.ttabs[i].tid === el.tactive) return el.ttabs[i];
+    return null;
+  }
+  function termCloseSession(el, tab) {
+    if (tab.sub) { try { S.bridge.unsubscribeSSE(tab.sub); } catch (e) {} tab.sub = null; }
+    if (tab.sid) {
+      postJSON("terminal/close", { sid: tab.sid }).catch(function () {});
+      tab.sid = null;
+    }
+  }
+  async function termOpenSession(el, tab) {
+    if (el.termOpening) return;
+    el.termOpening = true;
+    try {
+      var size = termFit(el, tab);
+      var res = await postJSON("terminal/open", { target: tab.target, cols: size.cols, rows: size.rows });
+      if (!res || !res.sid) throw new Error((res && res.error) || "会话建立失败");
+      tab.sid = res.sid;
+      tab.reconnects = 0;
+      tab.sub = await S.bridge.subscribeSSE("terminal/stream", {
+        onMessage: function (m) {
+          var o = m && m.parsed;
+          if (!o || !tab.term) return;
+          if (o.d) tab.term.write(o.d);
+          if (o.e) tab.term.writeln("\x1b[33m" + o.e + "\x1b[0m");
+          if (el.autoScroll !== false && el.tactive === tab.tid) {
+            try { tab.term.scrollToBottom(); } catch (e2) {}
+          }
+        },
+        onError: function () {
+          tab.reconnects = (tab.reconnects || 0) + 1;
+          if (tab.reconnects > 3) {
+            if (tab.term) tab.term.writeln("\x1b[31m[输出流中断，重连失败]\x1b[0m");
+            return;
+          }
+          if (tab.term) tab.term.writeln("\x1b[33m[输出流中断，重连 (" + tab.reconnects + "/3) …]\x1b[0m");
+          setTimeout(async function () { await termOpenSession(el, tab); }, 1500);
+        }
+      }, { sid: tab.sid });
+    } catch (e) {
+      if (tab.term) tab.term.writeln("\x1b[31m" + (e.message || String(e)) + "\x1b[0m");
+      tab.sid = null;
+    }
+    el.termOpening = false;
+  }
+  function termSwitch(el, tid) {
+    el.tactive = tid;
+    el.ttabs.forEach(function (t) {
+      t.box.hidden = (t.tid !== tid);
+    });
+    var t = activeTabOf(el);
+    if (t) {
+      if (el.termSel && el.termData) {
+        var list = (el.termData.targets || []).filter(function (x) { return x.supported; });
+        var has = list.some(function (x) { return x.name === t.target; });
+        if (has) el.termSel.value = t.target;
+      }
+      pSyncSource(el, t.target);
+      var sz = termFit(el, t);
+      if (t.sid) postJSON("terminal/resize", { sid: t.sid, cols: sz.cols, rows: sz.rows }).catch(function () {});
+      try { t.term.focus(); } catch (e) {}
+    }
+    renderTabBar(el);
+  }
+  function pSyncSource(el, target) {
+    var pp = el._p;
+    if (pp && pp.source !== target) { pp.source = target; markCustom(); updateBadge(pp, el); }
+  }
+  async function termOpenTab(p, el, target, force) {
+    if (!force) {
+      var ex = null;
+      el.ttabs.forEach(function (t) { if (t.target === target && !ex) ex = t; });
+      if (ex) { termSwitch(el, ex.tid); return; }
+    }
+    var tid = "t" + (++el.tseq);
+    var box = document.createElement("div");
+    box.className = "term-tabbox";
+    el.termOut.appendChild(box);
+    var tab = { tid: tid, target: target, sid: null, sub: null, term: null, box: box, reconnects: 0 };
+    el.ttabs.push(tab);
+    if (window.Terminal) {
+      tab.term = new window.Terminal({
+        fontFamily: "ui-monospace, Consolas, \"Cascadia Code\", monospace",
+        fontSize: 13,
+        lineHeight: 1.25,
+        cursorBlink: true,
+        scrollback: 4000,
+        convertEol: false,
+        theme: termTheme()
+      });
+      tab.term.open(box);
+      tab.term.onData(function (data) {
+        if (tab.sid) postJSON("terminal/input", { sid: tab.sid, data: data }).catch(function () {});
+        else if (S.demo) tab.term.write(data === "\r" ? "\r\n" : data);
+      });
+      tab.term.onResize(function (sz) {
+        if (tab.sid) postJSON("terminal/resize", { sid: tab.sid, cols: sz.cols, rows: sz.rows }).catch(function () {});
+      });
+    } else {
+      box.innerHTML = '<div class="term-line t-meta">xterm.js 资产加载失败（assets/xterm.min.js 缺失）</div>';
+    }
+    renderTabBar(el);
+    if (tab.term) await termOpenSession(el, tab);
+    termSwitch(el, tid);
+  }
+  function termCloseTab(el, tid) {
+    var idx = -1, tab = null;
+    el.ttabs.forEach(function (t, i) { if (t.tid === tid) { idx = i; tab = t; } });
+    if (idx < 0) return;
+    termCloseSession(el, tab);
+    try { if (tab.term) tab.term.dispose(); } catch (e) {}
+    try { tab.box.remove(); } catch (e) {}
+    el.ttabs.splice(idx, 1);
+    if (el.tactive === tid) {
+      el.tactive = el.ttabs.length ? el.ttabs[Math.max(0, idx - 1)].tid : null;
+      var nt = activeTabOf(el);
+      if (nt) termSwitch(el, nt.tid);
+    }
+    renderTabBar(el);
+  }
+  function bindTerm(p, el) {
+    el.termOut = el.body.querySelector(".term-out");
+    el.termSel = el.body.querySelector(".term-target");
+    el.termAuto = el.body.querySelector(".term-auto");
+    el.ttabs = [];
+    el.tactive = null;
+    el.tseq = 0;
+    el.termReady = false;
+    el.autoScroll = S.termAuto !== false;
+    if (el.termAuto) {
+      el.termAuto.checked = el.autoScroll;
+      el.termAuto.addEventListener("change", function () {
+        el.autoScroll = this.checked;
+        if (el.autoScroll && el.term) {
+          try { el.term.scrollToBottom(); } catch (e2) {}
+        }
+      });
+    }
+    el.termSel.addEventListener("change", function () {
+      p.source = this.value;
+      markCustom(); updateBadge(p, el);
+      termOpenTab(p, el, this.value);
+    });
+    el.body.querySelector(".term-clear").addEventListener("click", function () {
+      var t = activeTabOf(el);
+      if (t) {
+        termCloseSession(el, t);
+        if (t.term) t.term.reset();
+        termOpenSession(el, t);
+      }
+    });
+  }
+  function renderTabBar(el) {
+    var bar = el.body.querySelector(".ttabs");
+    if (!bar) return;
+    var html = "";
+    el.ttabs.forEach(function (t) {
+      html += '<div class="ttab' + (t.tid === el.tactive ? " active" : "") + '" data-tid="' + t.tid + '" title="' +
+        esc(t.target) + '">' + esc(dispName(t.target)) +
+        '<span class="tx" data-x="' + t.tid + '" title="关闭">✕</span></div>';
+    });
+    html += '<button class="pbtn tt-new" title="新建会话">' + icon("plus") + "</button>";
+    bar.innerHTML = html;
+    bar.querySelectorAll(".ttab").forEach(function (chip) {
+      chip.addEventListener("click", function (e) {
+        if (e.target.classList.contains("tx")) return;
+        termSwitch(el, chip.dataset.tid);
+      });
+    });
+    bar.querySelectorAll(".tx").forEach(function (x) {
+      x.addEventListener("click", function (e) {
+        e.stopPropagation();
+        termCloseTab(el, x.dataset.x);
+      });
+    });
+    var nb = bar.querySelector(".tt-new");
+    if (nb) nb.addEventListener("click", function () {
+      var first = serverNames()[0] || "local";
+      var tgt = (el.termSel && el.termSel.value) || first;
+      termOpenTab(el._p, el, tgt, true);
+    });
+  }
+  async function refreshTermTargets(p, el) {
+    var targets = null;
+    try {
+      if (S.bridge) {
+        var res = await S.bridge.apiGet("terminal/targets", { _t: Date.now() });
+        if (res && res.status !== false && res.status !== "error") {
+          targets = (res.data !== undefined && res.data !== null) ? res.data : res;
+        }
+      } else if (S.demo) {
+        targets = { enabled: true, timeout: 30, targets: [
+          { name: "local", display_name: "本机（模拟）", mode: "local", supported: true },
+          { name: "web-1", display_name: "web-1", mode: "ssh", supported: true },
+          { name: "agent-1", display_name: "agent-1", mode: "agent", supported: false }
+        ] };
+      }
+    } catch (e) {}
+    if (!targets || !el.termSel || !el.termSel.isConnected) return;
+    el.termData = targets;
+    var list = (targets.targets || []).filter(function (t) { return t.supported; });
+    if (!list.length) {
+      if (el.ttabs.length) {
+        el.ttabs.slice().forEach(function (t) { termCloseTab(el, t.tid); });
+      }
+      return;
+    }
+    var html = "";
+    list.forEach(function (t) {
+      html += '<option value="' + esc(t.name) + '"' + (t.name === (el._p && el._p.source) ? " selected" : "") + ">" +
+        esc(t.display_name) + " · " + esc(t.mode) + "</option>";
+    });
+    el.termSel.innerHTML = html;
+    // 首个标签：无会话时自动打开
+    if (!el.ttabs.length) {
+      var defT = list.some(function (t) { return t.name === "local"; }) ? "local" : list[0].name;
+      termOpenTab(el._p, el, defT);
+    }
+  }
+  function renderTerm(p, el) {
+    el.body.dataset.rtc = String((+(el.body.dataset.rtc || 0)) + 1);
+    el._p = p;
+    window.__rtCalls = (window.__rtCalls || 0) + 1;
+    // 活动标签：尺寸变化 → 同步 xterm 与 PTY
+    var at = activeTabOf(el);
+    if (at && at.term && at.sid && !at.box.hidden) {
+      var rect = at.box.getBoundingClientRect();
+      if (Math.abs(rect.height - (at._lastH || 0)) > 8 || Math.abs(rect.width - (at._lastW || 0)) > 8) {
+        at._lastH = Math.round(rect.height); at._lastW = Math.round(rect.width);
+        var sz = termFit(el, at);
+        postJSON("terminal/resize", { sid: at.sid, cols: sz.cols, rows: sz.rows }).catch(function () {});
+      }
+    }
+    if (el.body.dataset.tg !== "1") {
+      el.body.dataset.tg = "1";
+      el._tgAt = Date.now();
+      refreshTermTargets(p, el);
+    } else if (Date.now() - (el._tgAt || 0) > 30000) {
+      el._tgAt = Date.now();
+      refreshTermTargets(p, el);
+    }
+  }
+
+  var RENDER = {
+
+
+ server: renderServer, charts: renderCharts, info: renderInfo, procs: renderProcs,
+                 docker: renderDocker, ports: renderPorts, http: renderHttp, llm: renderLLM,
+                 balance: renderBalance, term: renderTerm, alerts: renderAlerts };
+  function renderPanel(p) {
+    (window.__rpLog = window.__rpLog || []).push(p.type);
+    var el = S.el[p.id];
+    if (!el) return;
+    try {
+      var _fn = RENDER[p.type];
+      (window.__rpLog = window.__rpLog || []).push(p.type + " fn=" + typeof _fn);
+      _fn(p, el);
+    } catch (e) {
+      (window.__rpErr = window.__rpErr || []).push(p.type + ": " + (e && e.message || e));
+    }
+    S.rendered[p.id] = Date.now();
+  }
+  function renderAllPanels() { S.layout.forEach(function (p) { renderPanel(p); }); }
+
+  /* ================= 数据刷新调度（全局 + 每面板独立节奏） ================= */
+  function effInterval(p) { return p.interval > 0 ? p.interval : S.interval; }
+  async function refresh() {
+    if (S.busy) return null;
+    S.busy = true;
+    try {
+      S.data = await fetchOverview();
+      S.lastFetch = Date.now();
+      onData();
+    } catch (e) {
+      setStatus(false, e && e.message ? e.message : String(e));
+      setBanner("err", "无法获取监控数据：" + (e && e.message ? e.message : e) + "（将持续重试）");
+    }
+    S.busy = false;
+  }
+  function onData() {
+    buildPanels();
+    renderAllPanels();
+    setStatus(true);
+    if (S.demo) setBanner("warn", "预览模式：未检测到 AstrBot 宿主环境，当前为模拟数据。将页面置于 AstrBot 插件目录 pages/ 下即可接入真实数据。");
+    else setBanner(null);
+    var firstSrc = S.layout.map(function (p) { return p.source; }).filter(Boolean)[0] || "local";
+    var s0 = S.data && S.data.servers && S.data.servers[firstSrc];
+    var pts = (s0 && s0.history && s0.history.ts.length) || 0;
+    $("foot").textContent = "采样：本机 " + ((S.data && S.data.local_interval) || "-") + "s · 远程 " +
+      ((S.data && S.data.remote_interval) || "-") + "s · 探活 " + ((S.data && S.data.probes && S.data.probes.interval) || "-") +
+      "s · 曲线 " + pts + " 点 · astrbot_plugin_server_monitor v1.8";
+  }
+  async function tick() {
+    if (!S.layout || !S.layout.length) return;
+    var now = Date.now();
+    var minInt = Math.min.apply(null, S.layout.map(function (p) { return effInterval(p); })) || S.interval;
+    if (!S.data || now - S.lastFetch >= minInt * 1000 - 80) {
+      await refresh();
+      now = Date.now();
+    }
+    S.layout.forEach(function (p) {
+      if (now - (S.rendered[p.id] || 0) >= effInterval(p) * 1000 - 60) renderPanel(p);
+    });
+  }
+
+  /* ================= 添加面板菜单 ================= */
+  function buildMenu() {
+    var menu = $("addMenu");
+    var html = '<div class="muted">添加面板</div>';
+    Object.keys(TYPES).forEach(function (k) {
+      var t = TYPES[k];
+      html += '<button data-t="' + k + '">' + icon(t.icon) + t.name + "</button>";
+    });
+    html += '<div class="sep"></div><button id="miReset">' + icon("refresh") + "恢复默认布局</button>";
+    menu.innerHTML = html;
+    menu.querySelectorAll("button[data-t]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var type = btn.dataset.t;
+        var first = serverNames()[0] || "local";
+        S.layout.push({ id: uid(), type: type, source: TYPES[type].per ? first : "", span: TYPES[type].span, interval: 0 });
+        markCustom(); S.builtKey = ""; buildPanels(); saveLayout();
+        menu.classList.remove("open");
+        var np = S.layout[S.layout.length - 1];
+        var el = S.el[np.id];
+        if (el) { renderPanel(np); el.root.scrollIntoView({ behavior: "smooth", block: "center" }); }
+      });
+    });
+    var reset = menu.querySelector("#miReset");
+    if (reset) reset.addEventListener("click", function () {
+      S.auto = true; S.builtKey = ""; S._autoKey = null;
+      saveLayout(); buildPanels(); renderAllPanels();
+      menu.classList.remove("open");
+    });
+  }
+
+  /* ================= 布局菜单（预设 + 我的布局） ================= */
+  function applyLayout(items, closeMenu) {
+    S.layout = JSON.parse(JSON.stringify(items));
+    S.auto = false; S.builtKey = "";
+    buildPanels(); renderAllPanels(); saveLayout();
+    if (closeMenu) $("layoutMenu").classList.remove("open");
+  }
+  function buildLayoutMenu() {
+    var menu = $("layoutMenu");
+    var html = '<div class="muted">预设布局</div>';
+    Object.keys(PRESETS).forEach(function (k) {
+      var t = PRESETS[k];
+      html += '<button data-preset="' + k + '">' + icon(t.icon) + t.name + "</button>";
+    });
+    html += '<div class="sep"></div><div class="muted">我的布局</div>';
+    var saved = loadSavedLayouts();
+    if (!saved.length) {
+      html += '<div class="none">暂无保存的布局</div>';
+    } else {
+      saved.forEach(function (s, i) {
+        html += '<div class="myitem"><button data-apply="' + i + '" title="' + esc(s.name) + '">' +
+          icon("grid") + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(s.name) + "</span>" +
+          '<span class="sub2">' + s.items.length + " 面板</span></button>" +
+          '<button class="mydel" data-del="' + i + '" title="删除此布局">' + icon("trash") + "</button></div>";
+      });
+    }
+    html += '<div class="sep"></div><div class="lrow">' +
+      '<input class="lname" placeholder="布局名称…" maxlength="20">' +
+      '<button id="saveCurLayout">' + icon("plus") + "保存当前</button></div>";
+    menu.innerHTML = html;
+
+    menu.querySelectorAll("button[data-preset]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        applyLayout(PRESETS[btn.dataset.preset].build(serverNames()), true);
+      });
+    });
+    menu.querySelectorAll("button[data-apply]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var list = loadSavedLayouts();
+        var it = list[parseInt(btn.dataset.apply, 10)];
+        if (it) applyLayout(it.items, true);
+      });
+    });
+    menu.querySelectorAll(".mydel").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var list = loadSavedLayouts();
+        list.splice(parseInt(btn.dataset.del, 10), 1);
+        persistSavedLayouts(list);
+        buildLayoutMenu();
+      });
+    });
+    var saveBtn = menu.querySelector("#saveCurLayout");
+    if (saveBtn) saveBtn.addEventListener("click", function () {
+      if (!S.layout.length) return;
+      var list = loadSavedLayouts();
+      var inp = menu.querySelector(".lname");
+      var name = (inp.value || "").trim() || "我的布局";
+      var base = name, n = 2;
+      while (list.some(function (x) { return x.name === name; })) { name = base + " (" + n + ")"; n++; }
+      list.push({ name: name, ts: Date.now(), items: JSON.parse(JSON.stringify(S.layout)) });
+      persistSavedLayouts(list);
+      buildLayoutMenu();
+      var inp2 = $("layoutMenu").querySelector(".lname");
+      if (inp2) { inp2.placeholder = "已保存 ✓"; setTimeout(function () { inp2.placeholder = "布局名称…"; }, 1600); }
+    });
+    var inp0 = menu.querySelector(".lname");
+    if (inp0) inp0.addEventListener("click", function (e) { e.stopPropagation(); });
+  }
+
+  /* ================= 启动 ================= */
+  var resizeTimer = null;
+  async function boot() {
+    S.bridge = await resolveBridge(8000);
+    if (S.bridge) {
+      try {
+        S.bridge.onContext(function (nc) {
+          if (nc && typeof nc.isDark === "boolean" && nc.isDark !== S.ctx.isDark) {
+            S.ctx = nc; applyTheme(); renderAllPanels();
+          }
+        });
+      } catch (e) {}
+      try {
+        var c = await withTimeout(S.bridge.ready(), 4000);
+        if (c && typeof c.isDark === "boolean") S.ctx = c;
+      } catch (e) {}
+    } else {
+      S.demo = true;
+      document.body.classList.add("demo");
+      // 无宿主时跟随系统明暗设置
+      try {
+        var mq = window.matchMedia("(prefers-color-scheme: dark)");
+        if (mq) {
+          S.ctx.isDark = mq.matches;
+          var onScheme = function (ev) {
+            if (S.demo) { S.ctx.isDark = ev.matches; applyTheme(); renderAllPanels(); }
+          };
+          if (mq.addEventListener) mq.addEventListener("change", onScheme);
+          else if (mq.addListener) mq.addListener(onScheme);
+        }
+      } catch (e) {}
+      seedDemo();
+    }
+    applyTheme();
+
+    // 布局/刷新频率恢复：服务端（跨设备）优先，其次 localStorage，最后默认
+    var restored = false;
+    if (S.bridge && !S.demo) {
+      try {
+        var ui = await S.bridge.apiGet("ui/load", {});
+        var ud = (ui && ui.data !== undefined && ui.data !== null) ? ui.data : ui;
+        if (ud && Array.isArray(ud.items) && ud.items.length) {
+          S.auto = !!ud.auto;
+          S.layout = ud.items;
+          restored = true;
+        }
+        if (ud && ud.tas === false) S.termAuto = false;
+        if (Array.isArray(ud.saved)) S.savedLayouts = ud.saved;
+        if (ud && ud.gint >= 1 && ud.gint <= 3600) {
+          S.interval = parseInt(ud.gint, 10);
+          $("intervalNum").value = String(S.interval);
+        }
+      } catch (e) {}
+    }
+    if (!restored && loadLayout()) restored = true;
+    if (!restored) S.layout = [];
+    try {
+      var saved = parseInt(localStorage.getItem(LS_GINT) || localStorage.getItem("srvmon-interval") || "5", 10);
+      if (!restored && saved >= 1 && saved <= 3600) S.interval = saved;
+    } catch (e) {}
+    $("intervalNum").value = String(S.interval);
+
+    buildMenu();
+    $("refreshBtn").addEventListener("click", async function () { await refresh(); });
+    $("intervalNum").addEventListener("change", function () {
+      var v = parseInt(this.value, 10) || 5;
+      v = Math.max(1, Math.min(3600, v));
+      this.value = String(v); S.interval = v;
+      try { localStorage.setItem(LS_GINT, String(v)); } catch (e) {}
+      persistState();
+    });
+    $("addBtn").addEventListener("click", function (e) {
+      e.stopPropagation();
+      $("addMenu").classList.toggle("open");
+      $("layoutMenu").classList.remove("open");
+    });
+    document.addEventListener("click", function (e) {
+      if (!e.target.closest) return;
+      if (!e.target.closest("#addMenu") && !e.target.closest("#addBtn")) {
+        $("addMenu").classList.remove("open");
+      }
+      if (!e.target.closest("#layoutMenu") && !e.target.closest("#layoutBtn")) {
+        $("layoutMenu").classList.remove("open");
+      }
+    });
+    $("layoutBtn").addEventListener("click", function (e) {
+      e.stopPropagation();
+      buildLayoutMenu();
+      $("layoutMenu").classList.toggle("open");
+      $("addMenu").classList.remove("open");
+    });
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) refresh();
+    });
+    window.addEventListener("resize", function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(renderAllPanels, 160);
+    });
+
+    await refresh();
+    setInterval(function () { tick(); }, 500);
+    await tick();
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

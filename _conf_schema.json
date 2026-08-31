@@ -1,0 +1,258 @@
+{
+  "local_monitor": {
+    "description": "启用本机监控（AstrBot 所在机器）",
+    "type": "bool",
+    "default": true
+  },
+  "local_interval": {
+    "description": "本机采样间隔（秒）",
+    "type": "int",
+    "default": 5,
+    "hint": "建议 3~30 秒，越小曲线越实时，开销略增"
+  },
+  "remote_interval": {
+    "description": "远程服务器采样间隔（秒）",
+    "type": "int",
+    "default": 60,
+    "hint": "每次采集会通过 SSH/HTTP 拉取一次数据，建议 30~300 秒"
+  },
+  "history_points": {
+    "description": "每个服务器保留的历史数据点数",
+    "type": "int",
+    "default": 360,
+    "hint": "用于 WebUI 历史曲线，按采样间隔滚动保留"
+  },
+  "probe_interval": {
+    "description": "探活检测间隔（秒）",
+    "type": "int",
+    "default": 30,
+    "hint": "下方 TCP 端口 / HTTP 服务探活的执行周期"
+  },
+  "tcp_probes": {
+    "description": "TCP 端口探活列表",
+    "type": "template_list",
+    "hint": "定期探测端口连通性并测量延迟，WebUI 可添加「端口探活」面板查看",
+    "templates": {
+      "tcp": {
+        "name": "TCP 端口",
+        "items": {
+          "name": {"description": "显示名称", "type": "string", "default": ""},
+          "host": {"description": "主机地址", "type": "string", "default": ""},
+          "port": {"description": "端口", "type": "int", "default": 22}
+        }
+      }
+    }
+  },
+  "http_probes": {
+    "description": "HTTP 服务探活列表",
+    "type": "template_list",
+    "hint": "定期请求 URL 检查状态码与延迟，WebUI 可添加「HTTP 探活」面板查看",
+    "templates": {
+      "http": {
+        "name": "HTTP 服务",
+        "items": {
+          "name": {"description": "显示名称", "type": "string", "default": ""},
+          "url": {"description": "完整 URL", "type": "string", "default": ""},
+          "method": {"description": "请求方法", "type": "string", "default": "GET"},
+          "expected_status": {"description": "期望状态码", "type": "int", "default": 200}
+        }
+      }
+    }
+  },
+  "collect_docker": {
+    "description": "采集 Docker 容器列表（本机 / SSH / Agent）",
+    "type": "bool",
+    "default": true,
+    "hint": "WebUI 可添加「Docker 容器」面板查看；目标机器无 docker 时自动跳过"
+  },
+  "collect_procs": {
+    "description": "采集 Top 进程列表（CPU 占用前 8）",
+    "type": "bool",
+    "default": true,
+    "hint": "WebUI 可添加「Top 进程」面板查看"
+  },
+  "llm_balance_interval": {
+    "description": "模型余额查询间隔（秒）",
+    "type": "int",
+    "default": 600,
+    "hint": "下方余额来源的查询周期，建议 ≥ 300 秒"
+  },
+  "terminal_enabled": {
+    "description": "启用 WebUI 终端（可在看板对目标机执行命令）",
+    "type": "bool",
+    "default": true,
+    "hint": "仅 AstrBot 管理面板（登录后）可用；支持本机与 SSH 模式的服务器。请妥善保管面板密码，不用时建议关闭"
+  },
+  "terminal_timeout": {
+    "description": "终端单条命令超时（秒）",
+    "type": "int",
+    "default": 30,
+    "hint": "3~300 秒；超时后进程会被强制终止，输出上限 100KB"
+  },
+  "llm_balance_sources": {
+    "description": "模型余额来源列表",
+    "type": "template_list",
+    "hint": "配置 API Key 后定期查询余额，WebUI 可添加「模型余额」面板；支持 DeepSeek / Moonshot(Kimi) / SiliconFlow / OpenAI Billing 兼容端点",
+    "templates": {
+      "deepseek": {
+        "name": "DeepSeek",
+        "items": {
+          "name": {"description": "显示名称", "type": "string", "default": "DeepSeek"},
+          "base_url": {"description": "API 地址", "type": "string", "default": "https://api.deepseek.com"},
+          "api_key": {"description": "API Key", "type": "string", "default": ""}
+        }
+      },
+      "moonshot": {
+        "name": "Moonshot (Kimi)",
+        "items": {
+          "name": {"description": "显示名称", "type": "string", "default": "Kimi"},
+          "base_url": {"description": "API 地址", "type": "string", "default": "https://api.moonshot.cn"},
+          "api_key": {"description": "API Key", "type": "string", "default": ""}
+        }
+      },
+      "siliconflow": {
+        "name": "SiliconFlow",
+        "items": {
+          "name": {"description": "显示名称", "type": "string", "default": "SiliconFlow"},
+          "base_url": {"description": "API 地址", "type": "string", "default": "https://api.siliconflow.cn"},
+          "api_key": {"description": "API Key", "type": "string", "default": ""}
+        }
+      },
+      "openai_billing": {
+        "name": "OpenAI Billing 兼容",
+        "items": {
+          "name": {"description": "显示名称", "type": "string", "default": "OpenAI"},
+          "base_url": {"description": "API 地址", "type": "string", "default": "https://api.openai.com/v1"},
+          "api_key": {"description": "API Key", "type": "string", "default": ""},
+          "note": {"description": "说明", "type": "string", "default": "", "hint": "使用 /dashboard/billing 接口，适合部分中转站；官方 OpenAI 已下线该接口"}
+        }
+      },
+      "oneapi": {
+        "name": "One-API / New-API 中转",
+        "items": {
+          "name": {"description": "显示名称", "type": "string", "default": "中转站"},
+          "base_url": {"description": "中转站根地址", "type": "string", "default": "", "hint": "例如 https://relay.example.com（不带 /v1）"},
+          "access_token": {"description": "系统访问令牌", "type": "string", "default": "", "hint": "中转站控制台生成的访问令牌（不是 sk- 开头的接口 Key）"},
+          "user_id": {"description": "用户 ID（New-API 选填）", "type": "string", "default": "", "hint": "new-api 部署通常需要填控制台里的用户 ID"}
+        }
+      }
+    }
+  },
+  "remote_servers": {
+    "description": "远程服务器列表",
+    "type": "template_list",
+    "hint": "添加需要监控的云服务器/远程主机。SSH 模板：通过 SSH 在远端执行只读采集脚本，仅支持 Linux；Agent 模板：在远端运行本插件 agent 目录下的 astrbot_srv_agent.py，通过 HTTP 拉取（支持 Linux/Windows/macOS）",
+    "templates": {
+      "ssh": {
+        "name": "SSH 服务器",
+        "items": {
+          "name": {
+            "description": "显示名称",
+            "type": "string",
+            "default": ""
+          },
+          "host": {
+            "description": "主机地址（IP 或域名）",
+            "type": "string",
+            "default": ""
+          },
+          "port": {
+            "description": "SSH 端口",
+            "type": "int",
+            "default": 22
+          },
+          "username": {
+            "description": "用户名",
+            "type": "string",
+            "default": "root"
+          },
+          "password": {
+            "description": "密码（认证方式一）",
+            "type": "string",
+            "default": ""
+          },
+          "key_path": {
+            "description": "私钥文件路径（认证方式二，填写后优先使用）",
+            "type": "string",
+            "default": "",
+            "hint": "例如 /root/.ssh/id_ed25519，本机密钥文件路径"
+          }
+        }
+      },
+      "agent": {
+        "name": "HTTP Agent 服务器",
+        "items": {
+          "name": {
+            "description": "显示名称",
+            "type": "string",
+            "default": ""
+          },
+          "url": {
+            "description": "Agent 地址",
+            "type": "string",
+            "default": "",
+            "hint": "例如 http://1.2.3.4:9122/metrics"
+          },
+          "token": {
+            "description": "访问令牌",
+            "type": "string",
+            "default": "",
+            "hint": "与 agent 启动参数 --token 一致，可留空"
+          }
+        }
+      }
+    }
+  },
+  "alerts": {
+    "description": "告警设置",
+    "type": "object",
+    "items": {
+      "enabled": {
+        "description": "启用阈值告警推送",
+        "type": "bool",
+        "default": false
+      },
+      "alert_umo": {
+        "description": "告警推送会话",
+        "type": "string",
+        "default": "",
+        "hint": "推荐在目标聊天里发送 /server bind 自动填写；格式为 平台ID:消息类型:会话ID，如 aiocqhttp:GroupMessage:123456"
+      },
+      "cpu_threshold": {
+        "description": "CPU 使用率告警阈值（%）",
+        "type": "int",
+        "default": 85
+      },
+      "mem_threshold": {
+        "description": "内存使用率告警阈值（%）",
+        "type": "int",
+        "default": 90
+      },
+      "disk_threshold": {
+        "description": "磁盘使用率告警阈值（%）",
+        "type": "int",
+        "default": 90
+      },
+      "sustain_times": {
+        "description": "连续超标多少次后触发告警",
+        "type": "int",
+        "default": 3
+      },
+      "cooldown": {
+        "description": "同一告警的冷却时间（秒）",
+        "type": "int",
+        "default": 1800
+      },
+      "notify_recovery": {
+        "description": "指标恢复后发送恢复通知",
+        "type": "bool",
+        "default": true
+      },
+      "notify_offline": {
+        "description": "远程服务器离线时告警",
+        "type": "bool",
+        "default": true
+      }
+    }
+  }
+}
