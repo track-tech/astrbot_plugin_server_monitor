@@ -74,20 +74,28 @@ def _llm_persist_path() -> Optional[str]:
 
 
 def _ui_state_path() -> Optional[str]:
-    """看板布局/刷新频率的服务端持久化文件。"""
+    """看板布局/刷新频率的服务端持久化文件。
+
+    优先 AstrBot 数据目录；拿不到时兜底到插件安装目录自身，
+    避免某些版本/部署形态下两个路径 API 都不可用导致保存被静默丢弃。"""
     try:
         from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 
         return os.path.join(get_astrbot_plugin_data_path(), PLUGIN_NAME, "ui_state.json")
     except Exception:
-        try:
-            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+        pass
+    try:
+        from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
-            return os.path.join(
-                get_astrbot_data_path(), "plugin_data", PLUGIN_NAME, "ui_state.json"
-            )
-        except Exception:
-            return None
+        return os.path.join(
+            get_astrbot_data_path(), "plugin_data", PLUGIN_NAME, "ui_state.json"
+        )
+    except Exception:
+        pass
+    try:
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui_state.json")
+    except Exception:
+        return None
 
 
 @register(PLUGIN_NAME, "track-tech", "本地/云服务器状态实时监控看板与告警", PLUGIN_VERSION)
@@ -123,6 +131,7 @@ class ServerMonitorPlugin(Star):
 
     async def _boot(self) -> None:
         await self._register_api()
+        logger.info(f"[server_monitor] 看板状态持久化文件: {_ui_state_path() or '不可用（布局将无法保存）'}")
         self._try_start_service()
 
     async def _register_api(self) -> None:
@@ -297,7 +306,10 @@ class ServerMonitorPlugin(Star):
 
     async def _term_body(self, request: Any) -> dict:
         try:
-            body = await request.json()
+            try:
+                body = await request.json(default={})
+            except TypeError:
+                body = await request.json()
             return body if isinstance(body, dict) else {}
         except Exception:
             return {}
@@ -318,16 +330,21 @@ class ServerMonitorPlugin(Star):
             request = self._get_request(request)
             body = {}
             try:
-                body = await request.json() or {}
-            except Exception:
+                try:
+                    body = await request.json(default={}) or {}
+                except TypeError:
+                    body = await request.json() or {}
+            except Exception as e:
+                logger.warning(f"[server_monitor] ui/save 请求体解析失败: {e}")
                 body = {}
             items = body.get("items")
             saved = body.get("saved")
             if not isinstance(items, list) and not isinstance(saved, list):
                 return self._json({"ok": False, "error": "布局数据无效"}, 400)
-            path = self._ui_state_path()
+            path = _ui_state_path()
             if not path:
-                return self._json({"ok": True, "persisted": False})
+                logger.error("[server_monitor] ui/save 无可用持久化路径，看板布局未能保存")
+                return self._json({"ok": False, "error": "服务端无可用持久化路径"})
             state: dict = {}
             if os.path.exists(path):
                 try:
@@ -358,7 +375,7 @@ class ServerMonitorPlugin(Star):
     async def api_ui_load(self, request: Any = None):
         """GET ui/load：读取看板布局与全局刷新频率。"""
         try:
-            path = self._ui_state_path()
+            path = _ui_state_path()
             if not path or not os.path.exists(path):
                 return self._json({"ok": True, "empty": True})
             with open(path, "r", encoding="utf-8") as f:

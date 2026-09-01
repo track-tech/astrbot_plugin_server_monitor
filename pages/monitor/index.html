@@ -185,6 +185,13 @@ window.addEventListener('unhandledrejection', function (e) {
   #banner.err { background: color-mix(in srgb, var(--err) 16%, transparent); }
   #banner svg.ic { color: var(--warn); }
   #banner.err svg.ic { color: var(--err); }
+  #toast {
+    position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%);
+    z-index: 99; max-width: 80vw; background: rgba(200,48,48,.92); color: #fff;
+    padding: 8px 16px; border-radius: 10px; font-size: 12.5px;
+    opacity: 0; pointer-events: none; transition: opacity .25s;
+  }
+  #toast.show { opacity: 1; }
 
   main { max-width: 1400px; margin: 0 auto; }
 
@@ -477,6 +484,7 @@ window.addEventListener('unhandledrejection', function (e) {
   </header>
 
   <div id="banner" class="glass"><svg class="ic"><use href="#i-warn"/></svg><span id="bannerText"></span></div>
+  <div id="toast"></div>
 
   <main>
     <div id="board"></div>
@@ -740,6 +748,18 @@ window.addEventListener('unhandledrejection', function (e) {
     b.className = "glass show " + type;
     $("bannerText").textContent = msg;
   }
+  var _toastTimer = null, _toastLast = { msg: "", at: 0 };
+  function toast(msg) {
+    var now = Date.now();
+    if (msg === _toastLast.msg && now - _toastLast.at < 5000) return; // 同内容 5s 去重
+    _toastLast = { msg: msg, at: now };
+    var t = $("toast");
+    if (!t) return;
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(function () { t.classList.remove("show"); }, 3200);
+  }
   function setStatus(ok, msg) {
     $("connDot").className = "led" + (ok ? " ok" : "");
     $("connText").textContent = ok
@@ -764,7 +784,10 @@ window.addEventListener('unhandledrejection', function (e) {
     if (S.bridge && !S.demo) {
       S.bridge.apiPost("ui/save", { auto: S.auto, items: S.layout,
         gint: S.interval, tas: S.termAuto !== false })
-        .catch(function () {});
+        .then(function (r) {
+          if (r && r.ok === false) toast("看板布局保存失败：" + (r.error || "服务端无可用持久化路径"));
+        })
+        .catch(function (e) { toast("看板布局保存失败：" + ((e && e.message) || e)); });
     }
   }
   function saveLayout() { persistState(); }
@@ -869,7 +892,11 @@ window.addEventListener('unhandledrejection', function (e) {
     S.savedLayouts = list;
     try { localStorage.setItem(LS_SAVED, JSON.stringify(list)); } catch (e) {}
     if (S.bridge && !S.demo) {
-      S.bridge.apiPost("ui/save", { saved: list }).catch(function () {});
+      S.bridge.apiPost("ui/save", { saved: list })
+        .then(function (r) {
+          if (r && r.ok === false) toast("布局预设保存失败：" + (r.error || "服务端无可用持久化路径"));
+        })
+        .catch(function (e) { toast("布局预设保存失败：" + ((e && e.message) || e)); });
     }
   }
 
