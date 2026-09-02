@@ -498,8 +498,8 @@ window.addEventListener('unhandledrejection', function (e) {
 
   /* ================= 常量与状态 ================= */
   var TYPES = {
-    server: { name: "服务器卡片", icon: "server",  per: true,  span: 2 },
-    charts: { name: "历史图表",   icon: "pulse",   per: true,  span: 2 },
+    server: { name: "服务器卡片", icon: "server",  per: true,  rng: true, span: 2 },
+    charts: { name: "历史图表",   icon: "pulse",   per: true,  rng: true, span: 2 },
     info:   { name: "系统信息",   icon: "list",    per: true,  span: 1 },
     procs:  { name: "Top 进程",   icon: "list",    per: true,  span: 2 },
     docker: { name: "Docker 容器", icon: "box",    per: true,  span: 2 },
@@ -510,6 +510,8 @@ window.addEventListener('unhandledrejection', function (e) {
     balance:{ name: "模型余额",   icon: "coins",   per: false, span: 1 },
     alerts: { name: "告警记录",   icon: "warn",    per: false, span: 2 }
   };
+  var RANGE_OPTS = [[0, "全部历史"], [600, "10 分钟"], [1800, "30 分钟"], [3600, "1 小时"],
+                    [10800, "3 小时"], [21600, "6 小时"], [43200, "12 小时"], [86400, "24 小时"]];
   var INTERVALS = [[0, "跟随全局"], [3, "3 秒"], [5, "5 秒"], [10, "10 秒"], [15, "15 秒"], [30, "30 秒"], [60, "1 分钟"], [120, "2 分钟"], [300, "5 分钟"]];
   var SPANS = [[1, "¼ 宽"], [2, "半宽"], [3, "¾ 宽"], [4, "整行"]];
 
@@ -798,7 +800,8 @@ window.addEventListener('unhandledrejection', function (e) {
         S.auto = !!raw.auto;
         S.layout = raw.items.filter(function (p) { return p && TYPES[p.type] && p.id; }).map(function (p) {
           return { id: String(p.id), type: p.type, source: p.source || "local",
-                   span: Math.min(4, Math.max(1, p.span | 0 || 2)), interval: p.interval | 0 };
+                   span: Math.min(4, Math.max(1, p.span | 0 || 2)), interval: p.interval | 0,
+                   range: p.range | 0 };
         });
         if (raw.gint >= 1 && raw.gint <= 3600) S.interval = parseInt(raw.gint, 10);
         return true;
@@ -1086,6 +1089,11 @@ window.addEventListener('unhandledrejection', function (e) {
     html += '<label>刷新<span class="selwrap"><select class="e-int">' +
       INTERVALS.map(function (s) { return '<option value="' + s[0] + '"' + (p.interval === s[0] ? " selected" : "") + ">" + s[1] + "</option>"; }).join("") +
       "</select></span></label>";
+    if (t.rng) {
+      html += '<label title="时间轴显示范围（受服务端保留点数限制，可在插件配置中调大「历史数据点数」）">范围<span class="selwrap"><select class="e-rng">' +
+        RANGE_OPTS.map(function (s) { return '<option value="' + s[0] + '"' + ((p.range | 0) === s[0] ? " selected" : "") + ">" + s[1] + "</option>"; }).join("") +
+        "</select></span></label>";
+    }
     html += '<button class="pbtn danger e-del" title="删除面板">' + icon("trash") + "删除</button>";
     el.editor.innerHTML = html;
 
@@ -1103,6 +1111,10 @@ window.addEventListener('unhandledrejection', function (e) {
     });
     el.editor.querySelector(".e-int").addEventListener("change", function () {
       p.interval = parseInt(this.value, 10) || 0; markCustom(); updateBadge(p, el);
+    });
+    var rngSel = el.editor.querySelector(".e-rng");
+    if (rngSel) rngSel.addEventListener("change", function () {
+      p.range = parseInt(this.value, 10) || 0; markCustom(); updateBadge(p, el); renderPanel(p);
     });
     el.editor.querySelector(".e-del").addEventListener("click", function () {
       S.layout = S.layout.filter(function (x) { return x.id !== p.id; });
@@ -1256,6 +1268,16 @@ window.addEventListener('unhandledrejection', function (e) {
     return { stale: age > limit, age: age };
   }
   function histOf(srv) { return (srv && srv.history) ? srv.history : null; }
+  /* 按面板自定义的时间范围裁剪历史序列（range 秒；0 = 全部） */
+  function histRange(hist, rangeS) {
+    if (!hist || !hist.ts || !rangeS) return hist;
+    var cut = Date.now() / 1000 - rangeS, i = 0, n = hist.ts.length;
+    while (i < n - 2 && Number(hist.ts[i]) < cut) i++;   // 至少保留 2 个点
+    if (i <= 0) return hist;
+    var out = { ts: hist.ts.slice(i) };
+    for (var k in hist) if (k !== "ts") out[k] = (hist[k] || []).slice(i);
+    return out;
+  }
   function emptyLine(text) { return '<div class="empty-line">' + esc(text) + "</div>"; }
 
   function renderServer(p, el) {
@@ -1307,7 +1329,7 @@ window.addEventListener('unhandledrejection', function (e) {
     var st = staleness(srv, snap);
     el.fresh.className = "fresh" + (st.stale ? " stale" : "");
     el.ftext.textContent = "更新于 " + fmtTime(snap.ts) + (st.stale ? " · 数据滞后 " + Math.round(st.age) + "s" : "");
-    drawSpark(el.spark, histOf(srv));
+    drawSpark(el.spark, histRange(histOf(srv), p.range | 0));
   }
 
   /* ---------- Canvas ---------- */
@@ -1390,9 +1412,10 @@ window.addEventListener('unhandledrejection', function (e) {
   function renderCharts(p, el) {
     var srv = srvOf(p.source);
     if (!srv) { el.body.innerHTML = emptyLine("数据源不存在，请在面板设置中选择服务器"); return; }
-    var hist = histOf(srv);
-    if (!hist) {
-      var a = prepCanvas(el.cPct); emptyCv(a.g, a.w, a.h, "暂无历史数据（离线或尚未采集）");
+    var hist = histRange(histOf(srv), p.range | 0);
+    if (!hist || !hist.ts || hist.ts.length < 2) {
+      var msg = (p.range | 0) ? "该时间范围内暂无数据（可调大范围或服务端「历史数据点数」）" : "暂无历史数据（离线或尚未采集）";
+      var a = prepCanvas(el.cPct); emptyCv(a.g, a.w, a.h, msg);
       var b = prepCanvas(el.cNet); emptyCv(b.g, b.w, b.h, "暂无历史数据");
       return;
     }

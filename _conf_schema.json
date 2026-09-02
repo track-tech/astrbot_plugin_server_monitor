@@ -19,8 +19,8 @@
   "history_points": {
     "description": "每个服务器保留的历史数据点数",
     "type": "int",
-    "default": 360,
-    "hint": "用于 WebUI 历史曲线，按采样间隔滚动保留"
+    "default": 720,
+    "hint": "用于 WebUI 历史曲线，按采样间隔滚动保留；本机 5s 间隔下 720 点≈1 小时，远程 60s 间隔下≈12 小时。面板「时间范围」可选范围受此值限制"
   },
   "probe_interval": {
     "description": "探活检测间隔（秒）",

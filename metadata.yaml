@@ -2,7 +2,7 @@ name: astrbot_plugin_server_monitor
 display_name: 服务器监控
 short_desc: 本地/云服务器状态实时监控看板与告警
 desc: 监控本机与远程服务器（SSH / HTTP Agent 两种接入方式）的 CPU、内存、磁盘、网络、负载等状态。页面无自绘背景（适配 wallpaper/透明美化主题），全矢量线性图标，支持聊天指令查询、阈值告警推送（含离线告警与恢复通知）。
-version: 1.10.1
+version: 1.11.0
 author: track-tech
 repo: https://github.com/track-tech/astrbot_plugin_server_monitor
 astrbot_version: ">=4.10.4,<5"

@@ -39,7 +39,7 @@ except ImportError:  # pragma: no cover
     _HAS_WEB_API = False
 
 PLUGIN_NAME = "astrbot_plugin_server_monitor"
-PLUGIN_VERSION = "1.10.1"
+PLUGIN_VERSION = "1.11.0"
 
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 if _PLUGIN_DIR not in sys.path:
